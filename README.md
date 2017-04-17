@@ -1,0 +1,2 @@
+# gcon
+Go Controller

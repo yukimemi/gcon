@@ -1,0 +1,45 @@
+tasks:
+  - id: Init
+    normal:
+      - func: Log
+        args:
+          msg: Initial func 0
+      - func: Log
+        args:
+          msg: |
+            Long long message.
+            new line.
+
+  - id: Startup
+    normal:
+      - func: Log
+        args:
+          msg: log 1
+          stdout: true
+      - func: Log
+        args:
+          msg: log 2
+      - func: Run
+        args:
+          target:
+            - id: Hoge
+            - id: Fuga
+              file: fuga.yaml
+    error:
+      - func: Log
+        args:
+          msg: Error !
+    final:
+      - func: Log
+        args:
+          msg: Finall func
+
+  - id: Hoge
+    normal:
+      - func: Log
+        args:
+          msg: log 3
+      - func: Log
+        args:
+          msg: log 4
+
