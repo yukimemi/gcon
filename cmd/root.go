@@ -99,13 +99,7 @@ type Args map[interface{}]interface{}
 type Process []Func
 
 // Funcs is func map.
-type Funcs map[string]F
-
-// F is func and arg struct.
-type F struct {
-	f func(*Gcon, Args) (TaskInfo, error)
-	p func(*Gcon, Args, interface{}) error
-}
+type Funcs map[string]func(*Gcon, Args) (TaskInfo, error)
 
 // Store store string data.
 type Store map[string]interface{}
@@ -202,6 +196,7 @@ func initConfig() {
 		startCfgFile = viper.ConfigFileUsed()
 	} else {
 		fmt.Fprintln(os.Stderr, err)
+		RootCmd.Usage()
 		os.Exit(ExitNG)
 	}
 	ci, err := startGcon.importCfg(startCfgFile)
@@ -221,6 +216,8 @@ func initConfig() {
 }
 
 func runE(cmd *cobra.Command, args []string) error {
+
+	fmt.Println("-- Start --")
 
 	cmd.SilenceUsage = true
 
@@ -264,7 +261,7 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 	g.setTaskInfo(ti)
 
 	// Execute final process.
-	if ti.ProType == Normal {
+	if g.Ti.ProType == Normal {
 		fTi := g.Ti
 		fTi.ProType = Final
 		defer g.Engine(fTi)
@@ -279,7 +276,7 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 	// Get process.
 	ps, err := g.getProcess()
 	if err != nil {
-		if ti.ProType == Normal {
+		if g.Ti.ProType == Normal {
 			return err
 		}
 		return nil
@@ -287,10 +284,15 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Execute process.
 	for _, f := range ps {
-		fmt.Printf("Path: [%v] ID: [%v] Type: [%v] Func: [%v] Args: [%v]\n", ti.Path, ti.ID, ti.ProType, f.Name, f.Args)
-		next, err := funcs[f.Name].f(g, f.Args)
-		if err != nil && ti.ProType == Normal {
-			errTi := ti
+		fmt.Printf("Path: [%v] ID: [%v] Type: [%v] Func: [%v] Args: [%v]\n", g.Ti.Path, g.Ti.ID, g.Ti.ProType, f.Name, f.Args)
+
+		a, err := g.repArgs(f.Args)
+		if err != nil {
+			return err
+		}
+		next, err := funcs[f.Name](g, a)
+		if err != nil && g.Ti.ProType == Normal {
+			errTi := g.Ti
 			errTi.ProType = Error
 			err2 := g.Engine(errTi)
 			if err2 != nil {
@@ -299,79 +301,32 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			return err
 		}
 		if next.ID != "" {
-			return g.Engine(next)
+			err := g.Engine(next)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-// ParseArgs make map to struct and check cfg.
-func ParseArgs(args Args, ptr interface{}) error {
+// Set key value to Store.
+func (g *Gcon) Set(key string, value interface{}, log bool) {
 
-	t, err := yaml.Marshal(args)
-	if err != nil {
-		return err
+	if log {
+		fmt.Printf("[%v] = [%v]\n", key, value)
 	}
+	g.Store[key] = value
+}
 
-	err = yaml.Unmarshal(t, ptr)
-	if err != nil {
-		return err
+// Get value by key from Store.
+func (g *Gcon) Get(key string) (interface{}, error) {
+
+	if v, ok := g.Store[key]; ok {
+		return v, nil
 	}
-
-	var check func(reflect.Value) error
-	check = func(rv reflect.Value) error {
-
-		switch rv.Kind() {
-		case reflect.Ptr:
-			rv = rv.Elem()
-		case reflect.Slice:
-			for i := 0; i < rv.Len(); i++ {
-				err := check(rv.Index(i))
-				if err != nil {
-					return err
-				}
-			}
-		}
-
-		rt := rv.Type()
-
-		for i := 0; i < rv.NumField(); i++ {
-			fieldV := rv.Field(i)
-			fieldT := rt.Field(i)
-			req := isRequire(fieldT.Tag.Get("require"))
-
-			switch fieldV.Kind() {
-			case reflect.Ptr, reflect.Struct:
-				err := check(fieldV)
-				if err != nil {
-					return err
-				}
-			case reflect.Slice:
-				for i := 0; i < fieldV.Len(); i++ {
-					err := check(fieldV.Index(i))
-					if err != nil {
-						return err
-					}
-				}
-			case reflect.Int:
-				if req && fieldV.Int() == 0 {
-					return fmt.Errorf("[%v.%v] is require. but not set", rt.Name(), fieldT.Name)
-				}
-			case reflect.String:
-				if req && fieldV.String() == "" {
-					return fmt.Errorf("[%v.%v] is require. but not set", rt.Name(), fieldT.Name)
-				}
-			case reflect.Bool:
-			default:
-				return fmt.Errorf("[%v] is not support", fieldV.Kind())
-			}
-		}
-
-		return nil
-	}
-
-	return check(reflect.ValueOf(ptr))
+	return nil, fmt.Errorf("Not found key: [%v]", key)
 }
 
 func (g *Gcon) setCfg(cfgFile string) error {
@@ -380,11 +335,11 @@ func (g *Gcon) setCfg(cfgFile string) error {
 	if err != nil {
 		return err
 	}
-	g.set("CFG_ID", startTaskID, false)
-	g.set("CFG_DIR", cfgPI.Dir, false)
-	g.set("CFG_FILE", cfgPI.File, false)
-	g.set("CFG_NAME", cfgPI.Name, false)
-	g.set("CFG_FILENAME", cfgPI.FileName, false)
+	g.Set("CFG_ID", startTaskID, false)
+	g.Set("CFG_DIR", cfgPI.Dir, false)
+	g.Set("CFG_FILE", cfgPI.File, false)
+	g.Set("CFG_NAME", cfgPI.Name, false)
+	g.Set("CFG_FILENAME", cfgPI.FileName, false)
 
 	return nil
 }
@@ -454,10 +409,10 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 	}
 
 	// Check config file.
-	err = g.checkCfg(cfg)
-	if err != nil {
-		return CfgInfo{}, err
-	}
+	// err = g.checkCfg(cfg)
+	// if err != nil {
+	// 	return CfgInfo{}, err
+	// }
 
 	// Set cfgInfo to cfgInfos.
 	ci := CfgInfo{
@@ -497,38 +452,22 @@ func (g *Gcon) searchCfgInfo(ti TaskInfo) (CfgInfo, error) {
 	return CfgInfo{}, fmt.Errorf("Not found task ID: [%v] Path: [%v] ", ti.ID, ti.Path)
 }
 
-func (g *Gcon) set(key string, value interface{}, log bool) {
-
-	if log {
-		fmt.Printf("[%v] = [%v]\n", key, value)
-	}
-	g.Store[key] = value
-}
-
-func (g *Gcon) get(key string) (interface{}, error) {
-
-	if v, ok := g.Store[key]; ok {
-		return v, nil
-	}
-	return nil, fmt.Errorf("Not found key: [%v]", key)
-}
-
 func (g *Gcon) checkCfg(cfg Cfg) error {
 
 	// Check func.
 	check := func(ps Process) error {
-		for _, f := range ps {
-			// Check func name.
-			fn, ok := funcs[f.Name]
-			if !ok {
-				return fmt.Errorf("func [%v] is not found", f.Name)
-			}
-			// Check args.
-			err := fn.p(g, f.Args, nil)
-			if err != nil {
-				return err
-			}
-		}
+		// for _, f := range ps {
+		// Check func name.
+		// fn, ok := funcs[f.Name]
+		// if !ok {
+		// 	return fmt.Errorf("func [%v] is not found", f.Name)
+		// }
+		// Check args.
+		// err := fn.s.Parse(f.Args)
+		// if err != nil {
+		// 	return err
+		// }
+		// }
 
 		return nil
 	}
@@ -581,13 +520,13 @@ func (g *Gcon) init() error {
 func (g *Gcon) setTaskInfo(ti TaskInfo) {
 
 	pi, _ := file.GetPathInfo(ti.Path)
-	g.set("TASK_ID", ti.ID, false)
-	g.set("TASK_DIR", pi.Dir, false)
-	g.set("TASK_FILE", pi.File, false)
-	g.set("TASK_NAME", pi.Name, false)
-	g.set("TASK_FILENAME", pi.FileName, false)
+	g.Set("TASK_ID", ti.ID, false)
+	g.Set("TASK_DIR", pi.Dir, false)
+	g.Set("TASK_FILE", pi.File, false)
+	g.Set("TASK_NAME", pi.Name, false)
+	g.Set("TASK_FILENAME", pi.FileName, false)
 
-	g.set("PROCESS_TYPE", ti.ProType, false)
+	g.Set("PROCESS_TYPE", ti.ProType, false)
 
 	g.Ti = ti
 
@@ -596,6 +535,136 @@ func (g *Gcon) setTaskInfo(ti TaskInfo) {
 func (g *Gcon) setCfgInfo(ci CfgInfo) {
 
 	g.Ci = ci
+}
+
+func (g *Gcon) repArgs(args Args) (Args, error) {
+
+	var rep func(reflect.Value) (interface{}, error)
+	rep = func(rv reflect.Value) (interface{}, error) {
+
+		switch rv.Kind() {
+		case reflect.Map:
+			// fmt.Printf("Map: [%v]\n", rv)
+			tm := make(map[interface{}]interface{})
+			for _, key := range rv.MapKeys() {
+				m, err := rep(rv.MapIndex(key))
+				if err != nil {
+					return nil, err
+				}
+				tm[key.Interface()] = m
+			}
+			return tm, nil
+		case reflect.Slice:
+			// fmt.Printf("Slice: [%v]\n", rv)
+			ts := make([]interface{}, 0)
+			for i := 0; i < rv.Len(); i++ {
+				s, err := rep(rv.Index(i))
+				if err != nil {
+					return nil, err
+				}
+				ts = append(ts, s)
+			}
+			return ts, nil
+		case reflect.Int:
+			// fmt.Printf("Int: [%v]\n", rv.Int())
+			return rv.Interface(), nil
+		case reflect.String:
+			// fmt.Printf("String: [%v]\n", rv.String())
+			// TODO: Replace string.
+			return rv.Interface(), nil
+		case reflect.Bool:
+			// fmt.Printf("Bool: [%v]\n", rv.Bool())
+			return rv.Interface(), nil
+		case reflect.Interface:
+			// fmt.Printf("Interface: [%v]\n", rv.Interface())
+			iface, err := rep(rv.Elem())
+			if err != nil {
+				return nil, err
+			}
+			return iface, nil
+		default:
+			return nil, fmt.Errorf("[%v] is not support", rv.Kind())
+		}
+	}
+
+	a := make(Args)
+	for k, v := range args {
+		iface, err := rep(reflect.ValueOf(v))
+		if err != nil {
+			return nil, err
+		}
+		a[k] = iface
+	}
+
+	return a, nil
+}
+
+// ParseArgs make map to struct and check cfg.
+func ParseArgs(args Args, ptr interface{}) error {
+
+	t, err := yaml.Marshal(args)
+	if err != nil {
+		return err
+	}
+
+	err = yaml.Unmarshal(t, ptr)
+	if err != nil {
+		return err
+	}
+
+	var check func(reflect.Value) error
+	check = func(rv reflect.Value) error {
+
+		switch rv.Kind() {
+		case reflect.Ptr:
+			rv = rv.Elem()
+		case reflect.Slice:
+			for i := 0; i < rv.Len(); i++ {
+				err := check(rv.Index(i))
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		rt := rv.Type()
+
+		for i := 0; i < rv.NumField(); i++ {
+			fieldV := rv.Field(i)
+			fieldT := rt.Field(i)
+			req := isRequire(fieldT.Tag.Get("require"))
+
+			switch fieldV.Kind() {
+			case reflect.Ptr, reflect.Struct:
+				err := check(fieldV)
+				if err != nil {
+					return err
+				}
+			case reflect.Slice:
+				for i := 0; i < fieldV.Len(); i++ {
+					err := check(fieldV.Index(i))
+					if err != nil {
+						return err
+					}
+				}
+			case reflect.Int:
+				if req && fieldV.Int() == 0 {
+					return fmt.Errorf("[%v.%v] is require. but not set", rt.Name(), fieldT.Name)
+				}
+			case reflect.String:
+				if req && fieldV.String() == "" {
+					return fmt.Errorf("[%v.%v] is require. but not set", rt.Name(), fieldT.Name)
+				}
+			case reflect.Bool:
+			default:
+				return fmt.Errorf("[%v] is not support", fieldV.Kind())
+			}
+		}
+
+		return nil
+	}
+
+	return check(reflect.ValueOf(ptr))
 }
 
 func isRequire(req string) bool {

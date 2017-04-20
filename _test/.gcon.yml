@@ -3,14 +3,14 @@ tasks:
     normal:
       - func: Log
         args:
-          msg: Initial func from fuga.
+          msg: Initial func 0
       - func: Log
         args:
-          msg: |
+          msg: |-
             Long long message.
-            new line from fuga.
+            new line.
 
-  - id: Fuga
+  - id: Startup
     normal:
       - func: Log
         args:
@@ -21,9 +21,15 @@ tasks:
           msg: log 2
       - func: Run
         args:
-          target:
+          targets:
             - id: Hoge
-
+            - id: Fuga
+              file: _test/fuga.yml
+      - func: SetStore
+        args:
+          sets:
+            - key: stdout
+              val: true
     error:
       - func: Log
         args:

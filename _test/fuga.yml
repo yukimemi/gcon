@@ -3,14 +3,14 @@ tasks:
     normal:
       - func: Log
         args:
-          msg: Initial func 0
+          msg: Initial func from fuga.
       - func: Log
         args:
           msg: |
             Long long message.
-            new line.
+            new line from fuga.
 
-  - id: Startup
+  - id: Fuga
     normal:
       - func: Log
         args:
@@ -21,10 +21,9 @@ tasks:
           msg: log 2
       - func: Run
         args:
-          target:
+          targets:
             - id: Hoge
-            - id: Fuga
-              file: fuga.yaml
+
     error:
       - func: Log
         args:

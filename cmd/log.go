@@ -3,10 +3,7 @@ package cmd
 import "fmt"
 
 func init() {
-	funcs["Log"] = F{
-		f: (*Gcon).Log,
-		p: (*Gcon).ParseLog,
-	}
+	funcs["Log"] = (*Gcon).Log
 }
 
 // ArgsLog is Log func args.
@@ -15,20 +12,11 @@ type ArgsLog struct {
 	Stdout bool   `require:"false"`
 }
 
-// ParseLog parse args and set ArgsLog.
-func (g *Gcon) ParseLog(args Args, ptr interface{}) error {
-
-	if ptr == nil {
-		return ParseArgs(args, &ArgsLog{})
-	}
-	return ParseArgs(args, ptr)
-}
-
 // Log output msg.
 func (g *Gcon) Log(args Args) (TaskInfo, error) {
 
-	a := ArgsLog{}
-	err := g.ParseLog(args, &a)
+	a := &ArgsLog{}
+	err := ParseArgs(args, a)
 	if err != nil {
 		return TaskInfo{}, err
 	}
