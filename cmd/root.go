@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -114,6 +115,22 @@ type Gcon struct {
 	Store
 }
 
+// Logger is log func interface.
+type Logger interface {
+	Info(string, ...interface{})
+	Warn(string, ...interface{})
+	Error(string, ...interface{})
+	Debug(string, ...interface{})
+}
+
+// Log implements Logger.
+type Log struct {
+	Info  func(string, ...interface{})
+	Warn  func(string, ...interface{})
+	Error func(string, ...interface{})
+	Debug func(string, ...interface{})
+}
+
 var (
 	startCfgFile string
 	startTaskID  string
@@ -122,6 +139,12 @@ var (
 	cfgInfos   = make(CfgInfos, 0)
 	cfgInfosMu = new(sync.Mutex)
 	startGcon  = Gcon{Store: make(Store)}
+	log        = Log{
+		Info:  color.Green,
+		Warn:  color.Yellow,
+		Error: color.Red,
+		Debug: color.Magenta,
+	}
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -217,7 +240,7 @@ func initConfig() {
 
 func runE(cmd *cobra.Command, args []string) error {
 
-	fmt.Println("-- Start --")
+	log.Info("-- Start --")
 
 	cmd.SilenceUsage = true
 
@@ -569,7 +592,7 @@ func (g *Gcon) repArgs(args Args) (Args, error) {
 			// fmt.Printf("Int: [%v]\n", rv.Int())
 			return rv.Interface(), nil
 		case reflect.String:
-			// fmt.Printf("String: [%v]\n", rv.String())
+			log.Debug("String: [%v]\n", rv.String())
 			// TODO: Replace string.
 			return rv.Interface(), nil
 		case reflect.Bool:
