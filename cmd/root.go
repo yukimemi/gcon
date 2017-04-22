@@ -22,15 +22,22 @@ package cmd
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yukimemi/file"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v2"
 )
 
@@ -65,7 +72,8 @@ type CfgInfo struct {
 
 // Cfg is gcon config file struct.
 type Cfg struct {
-	Tasks []Task `mapstructure:"tasks"`
+	Tasks []Task     `mapstructure:"tasks" yaml:"tasks"`
+	Log   zap.Config `mapstructure:"log" yaml:"log"`
 }
 
 // CfgInfos is Array of CfgInfo.
@@ -74,10 +82,10 @@ type CfgInfos []CfgInfo
 // Task is execute task information.
 type Task struct {
 	// ID is task id.
-	ID     string  `mapstructure:"id"`
-	Normal Process `mapstructure:"normal"`
-	Error  Process `mapstructure:"error"`
-	Final  Process `mapstructure:"final"`
+	ID     string  `mapstructure:"id" yaml:"id"`
+	Normal Process `mapstructure:"normal" yaml:"normal"`
+	Error  Process `mapstructure:"error" yaml:"error"`
+	Final  Process `mapstructure:"final" yaml:"final"`
 }
 
 // TaskInfo is task file and task id.
@@ -89,8 +97,8 @@ type TaskInfo struct {
 
 // Func is function struct.
 type Func struct {
-	Name string `mapstructure:"func"`
-	Args Args   `mapstructure:"args"`
+	Name string `mapstructure:"func" yaml:"func"`
+	Args Args   `mapstructure:"args" yaml:"args"`
 }
 
 // Args is func arg.
@@ -105,6 +113,12 @@ type Funcs map[string]func(*Gcon, Args) (TaskInfo, error)
 // Store store string data.
 type Store map[string]interface{}
 
+// Logger is log struct.
+type Logger struct {
+	Spin  *spinner.Spinner
+	Sugar *zap.SugaredLogger
+}
+
 // Gcon is gcon app main struct.
 type Gcon struct {
 	// Now CfgIngo.
@@ -113,38 +127,21 @@ type Gcon struct {
 	Ti TaskInfo
 
 	Store
-}
-
-// Logger is log func interface.
-type Logger interface {
-	Info(string, ...interface{})
-	Warn(string, ...interface{})
-	Error(string, ...interface{})
-	Debug(string, ...interface{})
-}
-
-// Log implements Logger.
-type Log struct {
-	Info  func(string, ...interface{})
-	Warn  func(string, ...interface{})
-	Error func(string, ...interface{})
-	Debug func(string, ...interface{})
+	Logger
 }
 
 var (
 	startCfgFile string
 	startTaskID  string
+	startGcon    *Gcon
 
 	funcs      = make(Funcs)
 	cfgInfos   = make(CfgInfos, 0)
 	cfgInfosMu = new(sync.Mutex)
-	startGcon  = Gcon{Store: make(Store)}
-	log        = Log{
-		Info:  color.Green,
-		Warn:  color.Yellow,
-		Error: color.Red,
-		Debug: color.Magenta,
-	}
+
+	// Regexp pre compile.
+	reStore = regexp.MustCompile(`\${([^\$]*?)}`)
+	reDate  = regexp.MustCompile(`\${@date\(([^\$]*?)\)}`)
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -204,6 +201,8 @@ func init() {
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 
+	var err error
+
 	viper.SetConfigName(".gcon")
 	viper.AddConfigPath("$HOME")
 	viper.AddConfigPath(".")
@@ -215,32 +214,38 @@ func initConfig() {
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Println("Use config file:", viper.ConfigFileUsed())
+		color.Cyan("Use config file: [%v]", viper.ConfigFileUsed())
 		startCfgFile = viper.ConfigFileUsed()
 	} else {
 		fmt.Fprintln(os.Stderr, err)
 		RootCmd.Usage()
 		os.Exit(ExitNG)
 	}
-	ci, err := startGcon.importCfg(startCfgFile)
+
+	startGcon = NewGcon()
+	// Store cfg info.
+	err = startGcon.setCfg(viper.ConfigFileUsed())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(ExitNG)
+	}
+
+	ci, err := startGcon.importCfg(viper.ConfigFileUsed())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(ExitNG)
+	}
+	z, err := ci.Log.Build()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(ExitNG)
 	}
 	startGcon.Ci = ci
-
-	// Store cfg info.
-	err = startGcon.setCfg(ci.Path)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(ExitNG)
-	}
+	startGcon.Logger.Sugar = z.Sugar()
 
 }
 
 func runE(cmd *cobra.Command, args []string) error {
-
-	log.Info("-- Start --")
 
 	cmd.SilenceUsage = true
 
@@ -307,13 +312,24 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Execute process.
 	for _, f := range ps {
-		fmt.Printf("Path: [%v] ID: [%v] Type: [%v] Func: [%v] Args: [%v]\n", g.Ti.Path, g.Ti.ID, g.Ti.ProType, f.Name, f.Args)
+		now := time.Now()
+		sfx := color.GreenString("[%v] [%v] [%v] [%v] [%v]", now.Format("2006-01-02 15:04:05.000"), g.Ti.Path, g.Ti.ID, g.Ti.ProType, f.Name)
+		fmt.Println(sfx)
+		g.Spin.Stop()
+		g.Spin.Suffix = " " + sfx
+		g.Spin.Start()
+		time.Sleep(500 * time.Millisecond)
 
-		a, err := g.repArgs(f.Args)
+		// func exists check.
+		if _, ok := funcs[f.Name]; !ok {
+			return fmt.Errorf("func: [%v] is not defined", f.Name)
+		}
+
+		a, err := g.replaceAll(f.Args)
 		if err != nil {
 			return err
 		}
-		next, err := funcs[f.Name](g, a)
+		next, err := funcs[f.Name](g, a.(map[interface{}]interface{}))
 		if err != nil && g.Ti.ProType == Normal {
 			errTi := g.Ti
 			errTi.ProType = Error
@@ -335,10 +351,10 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 }
 
 // Set key value to Store.
-func (g *Gcon) Set(key string, value interface{}, log bool) {
+func (g *Gcon) Set(key string, value interface{}, output bool) {
 
-	if log {
-		fmt.Printf("[%v] = [%v]\n", key, value)
+	if output {
+		g.Infof("[%v] = [%v]", key, value)
 	}
 	g.Store[key] = value
 }
@@ -358,11 +374,11 @@ func (g *Gcon) setCfg(cfgFile string) error {
 	if err != nil {
 		return err
 	}
-	g.Set("CFG_ID", startTaskID, false)
-	g.Set("CFG_DIR", cfgPI.Dir, false)
-	g.Set("CFG_FILE", cfgPI.File, false)
-	g.Set("CFG_NAME", cfgPI.Name, false)
-	g.Set("CFG_FILENAME", cfgPI.FileName, false)
+	g.Set("_CFG_ID", startTaskID, false)
+	g.Set("_CFG_DIR", cfgPI.Dir, false)
+	g.Set("_CFG_FILE", cfgPI.File, false)
+	g.Set("_CFG_NAME", cfgPI.Name, false)
+	g.Set("_CFG_FILENAME", cfgPI.FileName, false)
 
 	return nil
 }
@@ -419,23 +435,44 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Println("Import config file:", viper.ConfigFileUsed())
+		color.Cyan("Import config file: [%v]", viper.ConfigFileUsed())
 	} else {
 		return CfgInfo{}, err
 	}
 
-	// Load and store cfg.
-	cfg := Cfg{}
-	err := viper.Unmarshal(&cfg)
+	// Load cfg for replace.
+	f, err := ioutil.ReadFile(viper.ConfigFileUsed())
+	if err != nil {
+		return CfgInfo{}, err
+	}
+	var a interface{}
+	err = yaml.Unmarshal(f, &a)
 	if err != nil {
 		return CfgInfo{}, err
 	}
 
-	// Check config file.
-	// err = g.checkCfg(cfg)
-	// if err != nil {
-	// 	return CfgInfo{}, err
-	// }
+	cfgMap := make(map[interface{}]interface{})
+	cfgMap["tasks"] = a.(map[interface{}]interface{})["tasks"]
+	logCfg, ok := a.(map[interface{}]interface{})["log"]
+	if ok {
+		logCfgRep, err := g.replaceAll(logCfg)
+		if err != nil {
+			return CfgInfo{}, err
+		}
+		cfgMap["log"] = logCfgRep
+	}
+
+	// Load and store cfg.
+	tb, err := yaml.Marshal(cfgMap)
+	if err != nil {
+		return CfgInfo{}, err
+	}
+
+	cfg := Cfg{}
+	err = yaml.Unmarshal(tb, &cfg)
+	if err != nil {
+		return CfgInfo{}, err
+	}
 
 	// Set cfgInfo to cfgInfos.
 	ci := CfgInfo{
@@ -543,13 +580,13 @@ func (g *Gcon) init() error {
 func (g *Gcon) setTaskInfo(ti TaskInfo) {
 
 	pi, _ := file.GetPathInfo(ti.Path)
-	g.Set("TASK_ID", ti.ID, false)
-	g.Set("TASK_DIR", pi.Dir, false)
-	g.Set("TASK_FILE", pi.File, false)
-	g.Set("TASK_NAME", pi.Name, false)
-	g.Set("TASK_FILENAME", pi.FileName, false)
+	g.Set("_TASK_ID", ti.ID, false)
+	g.Set("_TASK_DIR", pi.Dir, false)
+	g.Set("_TASK_FILE", pi.File, false)
+	g.Set("_TASK_NAME", pi.Name, false)
+	g.Set("_TASK_FILENAME", pi.FileName, false)
 
-	g.Set("PROCESS_TYPE", ti.ProType, false)
+	g.Set("_PROCESS_TYPE", ti.ProType, false)
 
 	g.Ti = ti
 
@@ -560,14 +597,14 @@ func (g *Gcon) setCfgInfo(ci CfgInfo) {
 	g.Ci = ci
 }
 
-func (g *Gcon) repArgs(args Args) (Args, error) {
+func (g *Gcon) replaceAll(iface interface{}) (interface{}, error) {
 
 	var rep func(reflect.Value) (interface{}, error)
 	rep = func(rv reflect.Value) (interface{}, error) {
 
 		switch rv.Kind() {
 		case reflect.Map:
-			// fmt.Printf("Map: [%v]\n", rv)
+			g.Debugf("Map: [%v]", rv)
 			tm := make(map[interface{}]interface{})
 			for _, key := range rv.MapKeys() {
 				m, err := rep(rv.MapIndex(key))
@@ -578,7 +615,7 @@ func (g *Gcon) repArgs(args Args) (Args, error) {
 			}
 			return tm, nil
 		case reflect.Slice:
-			// fmt.Printf("Slice: [%v]\n", rv)
+			g.Debugf("Slice: [%v]", rv)
 			ts := make([]interface{}, 0)
 			for i := 0; i < rv.Len(); i++ {
 				s, err := rep(rv.Index(i))
@@ -589,17 +626,17 @@ func (g *Gcon) repArgs(args Args) (Args, error) {
 			}
 			return ts, nil
 		case reflect.Int:
-			// fmt.Printf("Int: [%v]\n", rv.Int())
-			return rv.Interface(), nil
+			g.Debugf("Int: [%v]", rv.Int())
+			return rv.Int(), nil
 		case reflect.String:
-			log.Debug("String: [%v]\n", rv.String())
-			// TODO: Replace string.
-			return rv.Interface(), nil
+			g.Debugf("String: [%v]", rv.String())
+			rep := g.replace(rv.String())
+			return g.typeChange(rep), nil
 		case reflect.Bool:
-			// fmt.Printf("Bool: [%v]\n", rv.Bool())
-			return rv.Interface(), nil
+			g.Debugf("Bool: [%v]", rv.Bool())
+			return rv.Bool(), nil
 		case reflect.Interface:
-			// fmt.Printf("Interface: [%v]\n", rv.Interface())
+			g.Debugf("Interface: [%v]", rv.Interface())
 			iface, err := rep(rv.Elem())
 			if err != nil {
 				return nil, err
@@ -610,16 +647,43 @@ func (g *Gcon) repArgs(args Args) (Args, error) {
 		}
 	}
 
-	a := make(Args)
-	for k, v := range args {
-		iface, err := rep(reflect.ValueOf(v))
-		if err != nil {
-			return nil, err
-		}
-		a[k] = iface
+	return rep(reflect.ValueOf(iface))
+}
+
+func (g *Gcon) replace(node string) interface{} {
+
+	retry := false
+
+	// Date replace.
+	if reDate.MatchString(node) {
+		f := reDate.FindStringSubmatch(node)[1]
+		now := time.Now().Format(f)
+		color.Red("[%v] -> [%v]", node, now)
+		g.Debugf("[%v] -> [%v]", node, now)
+		// node = reDate.ReplaceAllString(node, now)
+		strings.Replace(node, "${@date("+f+")}", now, 1)
+		retry = true
 	}
 
-	return a, nil
+	// Store replace.
+	if reStore.MatchString(node) {
+		key := reStore.FindStringSubmatch(node)[1]
+		rep, err := g.Get(key)
+		if err == nil {
+			color.Red("[%v] -> [%v]", key, rep)
+			g.Debugf("[%v] -> [%v]", node, rep)
+			// node = reStore.ReplaceAllString(node, rep.(string))
+			strings.Replace(node, "${"+f+"}", rep, 1)
+			retry = true
+		}
+	}
+
+	if retry {
+		return g.replace(node)
+	}
+
+	return node
+
 }
 
 // ParseArgs make map to struct and check cfg.
@@ -655,7 +719,7 @@ func ParseArgs(args Args, ptr interface{}) error {
 		for i := 0; i < rv.NumField(); i++ {
 			fieldV := rv.Field(i)
 			fieldT := rt.Field(i)
-			req := isRequire(fieldT.Tag.Get("require"))
+			req, _ := strconv.ParseBool(fieldT.Tag.Get("require"))
 
 			switch fieldV.Kind() {
 			case reflect.Ptr, reflect.Struct:
@@ -690,17 +754,49 @@ func ParseArgs(args Args, ptr interface{}) error {
 	return check(reflect.ValueOf(ptr))
 }
 
-func isRequire(req string) bool {
+// NewGcon initiallize and return Gcon struct.
+func NewGcon() *Gcon {
 
-	switch req {
-	case "true":
-		return true
-	case "false":
-		return false
-	default:
-		err := fmt.Sprintf("require tag must be [true] or [false], but set [%v]", req)
-		fmt.Fprintln(os.Stderr, err)
-		panic(err)
+	g := &Gcon{
+		Store: make(Store),
+		Logger: Logger{
+			Spin: spinner.New(spinner.CharSets[14], 150*time.Millisecond),
+		},
+	}
+	g.Spin.Color("red")
+	g.Spin.Stop()
+	return g
+}
+
+func (g *Gcon) typeChange(src interface{}) interface{} {
+
+	if b, err := strconv.ParseBool(src); err == nil {
+		g.Debugf("[%v] -> [%v]", src, b)
+		return b
 	}
 
+	if n, err := strconv.Atoi(src); err == nil {
+		g.Debugf("[%v] -> [%v]", src, n)
+		return n
+	}
+
+	return src
+}
+
+// Infof is wrapper of sugar.Infof.
+func (l *Logger) Infof(template string, args ...interface{}) {
+	l.Spin.Stop()
+	if l.Sugar != nil {
+		l.Sugar.Infof(template, args...)
+	}
+	l.Spin.Start()
+}
+
+// Debugf is wrapper of sugar.Debugf.
+func (l *Logger) Debugf(template string, args ...interface{}) {
+	l.Spin.Stop()
+	if l.Sugar != nil {
+		l.Sugar.Debugf(template, args...)
+	}
+	l.Spin.Start()
 }
