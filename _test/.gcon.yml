@@ -64,7 +64,7 @@ log:
     callerEncoder: short
   outputPaths:
     - ${_CFG_DIR}/${_CFG_NAME}_${@date(20060102150405)}.log
-    - stdout
+    # - stdout
   errorOutputPaths:
     - stderr
 

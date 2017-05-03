@@ -37,6 +37,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yukimemi/file"
+	"github.com/yukimemi/gcon/env"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v2"
 )
@@ -214,7 +215,6 @@ func initConfig() {
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		color.Cyan("Use config file: [%v]", viper.ConfigFileUsed())
 		startCfgFile = viper.ConfigFileUsed()
 	} else {
 		fmt.Fprintln(os.Stderr, err)
@@ -312,13 +312,13 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Execute process.
 	for _, f := range ps {
-		now := time.Now()
-		sfx := color.GreenString("[%v] [%v] [%v] [%v] [%v]", now.Format("2006-01-02 15:04:05.000"), g.Ti.Path, g.Ti.ID, g.Ti.ProType, f.Name)
-		fmt.Println(sfx)
 		g.Spin.Stop()
+		now := time.Now()
+		g.Set("_FUNC_NAME", f.Name, false)
+		sfx := color.GreenString("[%v] [%v] [%v] [%v] [%v]", now.Format("2006-01-02 15:04:05.000"), g.Ti.Path, g.Ti.ID, g.Ti.ProType, f.Name)
+		fmt.Println("--- [START] " + sfx + " ---")
 		g.Spin.Suffix = " " + sfx
 		g.Spin.Start()
-		time.Sleep(500 * time.Millisecond)
 
 		// func exists check.
 		if _, ok := funcs[f.Name]; !ok {
@@ -345,6 +345,11 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 				return err
 			}
 		}
+
+		time.Sleep(500 * time.Millisecond)
+		g.Spin.Stop()
+		fmt.Println("--- [END  ] " + sfx + " ---")
+		g.Spin.Start()
 	}
 
 	return nil
@@ -360,12 +365,12 @@ func (g *Gcon) Set(key string, value interface{}, output bool) {
 }
 
 // Get value by key from Store.
-func (g *Gcon) Get(key string) (interface{}, error) {
+func (g *Gcon) Get(key string) interface{} {
 
 	if v, ok := g.Store[key]; ok {
-		return v, nil
+		return v
 	}
-	return nil, fmt.Errorf("Not found key: [%v]", key)
+	return nil
 }
 
 func (g *Gcon) setCfg(cfgFile string) error {
@@ -435,7 +440,7 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		color.Cyan("Import config file: [%v]", viper.ConfigFileUsed())
+		g.Infof("Import config file: [%v]", viper.ConfigFileUsed())
 	} else {
 		return CfgInfo{}, err
 	}
@@ -630,8 +635,11 @@ func (g *Gcon) replaceAll(iface interface{}) (interface{}, error) {
 			return rv.Int(), nil
 		case reflect.String:
 			g.Debugf("String: [%v]", rv.String())
-			rep := g.replace(rv.String())
-			return g.typeChange(rep), nil
+			rp := g.replace(rv.String())
+			if v, ok := rp.(string); ok {
+				return g.typeChange(v), nil
+			}
+			return rep(reflect.ValueOf(rp))
 		case reflect.Bool:
 			g.Debugf("Bool: [%v]", rv.Bool())
 			return rv.Bool(), nil
@@ -658,22 +666,24 @@ func (g *Gcon) replace(node string) interface{} {
 	if reDate.MatchString(node) {
 		f := reDate.FindStringSubmatch(node)[1]
 		now := time.Now().Format(f)
-		color.Red("[%v] -> [%v]", node, now)
 		g.Debugf("[%v] -> [%v]", node, now)
-		// node = reDate.ReplaceAllString(node, now)
-		strings.Replace(node, "${@date("+f+")}", now, 1)
+		node = strings.Replace(node, "${@date("+f+")}", now, 1)
 		retry = true
 	}
 
 	// Store replace.
 	if reStore.MatchString(node) {
 		key := reStore.FindStringSubmatch(node)[1]
-		rep, err := g.Get(key)
-		if err == nil {
-			color.Red("[%v] -> [%v]", key, rep)
+		rep := g.Get(key)
+		if rep != nil {
 			g.Debugf("[%v] -> [%v]", node, rep)
-			// node = reStore.ReplaceAllString(node, rep.(string))
-			strings.Replace(node, "${"+f+"}", rep, 1)
+			rv := reflect.ValueOf(rep)
+			switch rv.Kind() {
+			case reflect.String, reflect.Int:
+				node = strings.Replace(node, "${"+key+"}", rv.String(), 1)
+			default:
+				return rep
+			}
 			retry = true
 		}
 	}
@@ -768,7 +778,7 @@ func NewGcon() *Gcon {
 	return g
 }
 
-func (g *Gcon) typeChange(src interface{}) interface{} {
+func (g *Gcon) typeChange(src string) interface{} {
 
 	if b, err := strconv.ParseBool(src); err == nil {
 		g.Debugf("[%v] -> [%v]", src, b)
@@ -784,19 +794,37 @@ func (g *Gcon) typeChange(src interface{}) interface{} {
 }
 
 // Infof is wrapper of sugar.Infof.
-func (l *Logger) Infof(template string, args ...interface{}) {
-	l.Spin.Stop()
-	if l.Sugar != nil {
-		l.Sugar.Infof(template, args...)
+func (g *Gcon) Infof(template string, args ...interface{}) {
+
+	g.Spin.Stop()
+	defer g.Spin.Start()
+	fn := g.Get("_FUNC_NAME")
+	if fn == nil {
+		fn = ""
+	} else {
+		fn = fn.(string)
 	}
-	l.Spin.Start()
+	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+	if g.Sugar != nil {
+		g.Sugar.Infof(pre+template, args...)
+	}
 }
 
 // Debugf is wrapper of sugar.Debugf.
-func (l *Logger) Debugf(template string, args ...interface{}) {
-	l.Spin.Stop()
-	if l.Sugar != nil {
-		l.Sugar.Debugf(template, args...)
+func (g *Gcon) Debugf(template string, args ...interface{}) {
+
+	if env.DEBUG {
+		g.Spin.Stop()
+		defer g.Spin.Start()
+		fn := g.Get("_FUNC_NAME")
+		if fn == nil {
+			fn = ""
+		} else {
+			fn = fn.(string)
+		}
+		pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+		if g.Sugar != nil {
+			g.Sugar.Debugf(pre+template, args...)
+		}
 	}
-	l.Spin.Start()
 }

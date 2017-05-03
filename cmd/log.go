@@ -21,8 +21,12 @@ func (g *Gcon) Log(args Args) (TaskInfo, error) {
 		return TaskInfo{}, err
 	}
 	if a.Stdout {
+		g.Spin.Stop()
 		fmt.Println(a.Msg)
+		g.Spin.Start()
 	}
+
+	g.Infof(a.Msg)
 
 	return TaskInfo{}, nil
 }
