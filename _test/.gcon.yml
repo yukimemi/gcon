@@ -17,19 +17,28 @@ tasks:
           sets:
             - key: stdout
               val: true
-      - func: Log
+      - func: Copy
         args:
-          msg: log 1 ${@date(2006-01-02 15:04)}
-          stdout: ${stdout}
-      - func: Log
-        args:
-          msg: log 2
+          pairs:
+            - src: ${_CMD_DIR}
+              dst: ${_CFG_DIR}/_test/binfiles
+              filter:
+                matches: [e$]
+                ignores: [\/g]
+              recurse: true
       - func: Run
         args:
           targets:
             - id: Hoge
             - id: Fuga
               file: _test/fuga.yml
+      - func: Log
+        args:
+          msg: "log 1 ${@date(2006-01-02 15:04)}"
+          stdout: ${stdout}
+      - func: Log
+        args:
+          msg: log 2
     error:
       - func: Log
         args:
@@ -50,6 +59,7 @@ tasks:
 
 log:
   level: debug
+  output: true
   encoding: console
   encoderConfig:
     messageKey: Msg
@@ -63,8 +73,7 @@ log:
     durationEncoder: string
     callerEncoder: short
   outputPaths:
-    - ${_CFG_DIR}/${_CFG_NAME}_${@date(20060102150405)}.log
-    # - stdout
+    - ${_CFG_DIR}/${_CFG_NAME}_${@date(2006-01-02-15-04-05.000)}.log
   errorOutputPaths:
     - stderr
 

@@ -6,7 +6,7 @@ tasks:
           msg: Initial func from fuga.
       - func: Log
         args:
-          msg: |
+          msg: |-
             Long long message.
             new line from fuga.
 
@@ -19,11 +19,18 @@ tasks:
       - func: Log
         args:
           msg: log 2
+      - func: Copy
+        args:
+          pairs:
+            - src: ${_CFG_DIR}
+              dst: ${_PWD}/.gomi
+              filter:
+                ignores: ["${@date(2006-01-02-15-04)}"]
+              recurse: true
       - func: Run
         args:
           targets:
             - id: Hoge
-
     error:
       - func: Log
         args:

@@ -6,20 +6,20 @@ func init() {
 
 // ArgsSet is SetStore func args.
 type ArgsSet struct {
-	Sets []Set `require:"true"`
+	Sets []Set `validate:"required,dive,required"`
 }
 
 // Set is set key value list.
 type Set struct {
-	Key string `require:"true"`
-	Val string `require:"true"`
+	Key string `validate:"required"`
+	Val string `validate:"required"`
 }
 
 // SetStore set key val to Store.
 func (g *Gcon) SetStore(args Args) (TaskInfo, error) {
 
 	a := &ArgsSet{}
-	err := ParseArgs(args, a)
+	err := g.ParseArgs(args, a)
 	if err != nil {
 		return TaskInfo{}, err
 	}

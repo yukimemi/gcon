@@ -6,20 +6,20 @@ func init() {
 
 // ArgsRun is Run func args.
 type ArgsRun struct {
-	Targets []Target `require:"true"`
+	Targets []Target `validate:"required,dive,required"`
 }
 
 // Target is task info.
 type Target struct {
-	ID   string `require:"true"`
-	File string `require:"false"`
+	ID   string `validate:"required"`
+	File string
 }
 
 // Run output msg.
 func (g *Gcon) Run(args Args) (TaskInfo, error) {
 
 	a := &ArgsRun{}
-	err := ParseArgs(args, a)
+	err := g.ParseArgs(args, a)
 	if err != nil {
 		return TaskInfo{}, err
 	}

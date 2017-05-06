@@ -31,14 +31,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/briandowns/spinner"
 	"github.com/fatih/color"
+	"github.com/gosuri/uilive"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/yukimemi/core"
 	"github.com/yukimemi/file"
-	"github.com/yukimemi/gcon/env"
 	"go.uber.org/zap"
+	"gopkg.in/go-playground/validator.v9"
 	"gopkg.in/yaml.v2"
 )
 
@@ -58,8 +59,12 @@ const (
 	Final
 )
 
-// Init task id.
-const Init = "Init"
+const (
+	// Init task id.
+	Init = "Init"
+	// FuncName is fucntion name.
+	FuncName = "_FUNC_NAME"
+)
 
 // ProcessType is type of process.
 type ProcessType int
@@ -94,6 +99,7 @@ type TaskInfo struct {
 	Path    string
 	ID      string
 	ProType ProcessType
+	Func    string
 }
 
 // Func is function struct.
@@ -116,7 +122,6 @@ type Store map[string]interface{}
 
 // Logger is log struct.
 type Logger struct {
-	Spin  *spinner.Spinner
 	Sugar *zap.SugaredLogger
 }
 
@@ -139,6 +144,9 @@ var (
 	funcs      = make(Funcs)
 	cfgInfos   = make(CfgInfos, 0)
 	cfgInfosMu = new(sync.Mutex)
+	chTask     = make(chan TaskInfo)
+
+	validate = validator.New()
 
 	// Regexp pre compile.
 	reStore = regexp.MustCompile(`\${([^\$]*?)}`)
@@ -243,6 +251,28 @@ func initConfig() {
 	startGcon.Ci = ci
 	startGcon.Logger.Sugar = z.Sugar()
 
+	cmdPath, err := core.GetCmdPath(os.Args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(ExitNG)
+	}
+
+	// Set cmd info.
+	err = startGcon.setCmd(cmdPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(ExitNG)
+	}
+
+	// Set pwd.
+	pwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(ExitNG)
+	}
+
+	startGcon.Set("_PWD", pwd, false)
+
 }
 
 func runE(cmd *cobra.Command, args []string) error {
@@ -256,11 +286,17 @@ func runE(cmd *cobra.Command, args []string) error {
 	}
 	startGcon.setTaskInfo(ti)
 
+	color.Green("Start: %v", time.Now().Format("2006-01-02 15:04:05.000"))
+
+	go loopPrint()
+
 	err := startGcon.Engine(ti)
 	if err != nil {
+		startGcon.Errorf(err.Error())
 		return err
 	}
 
+	color.Green("End: %v", time.Now().Format("2006-01-02 15:04:05.000"))
 	return nil
 }
 
@@ -312,13 +348,10 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Execute process.
 	for _, f := range ps {
-		g.Spin.Stop()
-		now := time.Now()
-		g.Set("_FUNC_NAME", f.Name, false)
-		sfx := color.GreenString("[%v] [%v] [%v] [%v] [%v]", now.Format("2006-01-02 15:04:05.000"), g.Ti.Path, g.Ti.ID, g.Ti.ProType, f.Name)
-		fmt.Println("--- [START] " + sfx + " ---")
-		g.Spin.Suffix = " " + sfx
-		g.Spin.Start()
+		g.Ti.Func = f.Name
+		g.Set(FuncName, g.Ti.Func, false)
+		chTask <- g.Ti
+		g.Infof("--- Func Start ---")
 
 		// func exists check.
 		if _, ok := funcs[f.Name]; !ok {
@@ -346,10 +379,8 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			}
 		}
 
-		time.Sleep(500 * time.Millisecond)
-		g.Spin.Stop()
-		fmt.Println("--- [END  ] " + sfx + " ---")
-		g.Spin.Start()
+		time.Sleep(time.Millisecond * 500)
+		g.Infof("--- Func End ---")
 	}
 
 	return nil
@@ -384,6 +415,20 @@ func (g *Gcon) setCfg(cfgFile string) error {
 	g.Set("_CFG_FILE", cfgPI.File, false)
 	g.Set("_CFG_NAME", cfgPI.Name, false)
 	g.Set("_CFG_FILENAME", cfgPI.FileName, false)
+
+	return nil
+}
+
+func (g *Gcon) setCmd(cmd string) error {
+
+	cmdPI, err := file.GetPathInfo(cmd)
+	if err != nil {
+		return err
+	}
+	g.Set("_CMD_DIR", cmdPI.Dir, false)
+	g.Set("_CMD_FILE", cmdPI.File, false)
+	g.Set("_CMD_NAME", cmdPI.Name, false)
+	g.Set("_CMD_FILENAME", cmdPI.FileName, false)
 
 	return nil
 }
@@ -437,6 +482,8 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 	if file != "" {
 		viper.SetConfigFile(file)
 	}
+
+	g.Debugf("Use config file (before load): [%v]", viper.ConfigFileUsed())
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
@@ -697,7 +744,7 @@ func (g *Gcon) replace(node string) interface{} {
 }
 
 // ParseArgs make map to struct and check cfg.
-func ParseArgs(args Args, ptr interface{}) error {
+func (g *Gcon) ParseArgs(args Args, ptr interface{}) error {
 
 	t, err := yaml.Marshal(args)
 	if err != nil {
@@ -709,72 +756,23 @@ func ParseArgs(args Args, ptr interface{}) error {
 		return err
 	}
 
-	var check func(reflect.Value) error
-	check = func(rv reflect.Value) error {
+	// Validate struct.
+	err = validate.Struct(ptr)
 
-		switch rv.Kind() {
-		case reflect.Ptr:
-			rv = rv.Elem()
-		case reflect.Slice:
-			for i := 0; i < rv.Len(); i++ {
-				err := check(rv.Index(i))
-				if err != nil {
-					return err
-				}
-			}
-		}
-
-		rt := rv.Type()
-
-		for i := 0; i < rv.NumField(); i++ {
-			fieldV := rv.Field(i)
-			fieldT := rt.Field(i)
-			req, _ := strconv.ParseBool(fieldT.Tag.Get("require"))
-
-			switch fieldV.Kind() {
-			case reflect.Ptr, reflect.Struct:
-				err := check(fieldV)
-				if err != nil {
-					return err
-				}
-			case reflect.Slice:
-				for i := 0; i < fieldV.Len(); i++ {
-					err := check(fieldV.Index(i))
-					if err != nil {
-						return err
-					}
-				}
-			case reflect.Int:
-				if req && fieldV.Int() == 0 {
-					return fmt.Errorf("[%v.%v] is require. but not set", rt.Name(), fieldT.Name)
-				}
-			case reflect.String:
-				if req && fieldV.String() == "" {
-					return fmt.Errorf("[%v.%v] is require. but not set", rt.Name(), fieldT.Name)
-				}
-			case reflect.Bool:
-			default:
-				return fmt.Errorf("[%v] is not support", fieldV.Kind())
-			}
-		}
-
-		return nil
+	if err != nil {
+		return err
 	}
 
-	return check(reflect.ValueOf(ptr))
+	return nil
 }
 
 // NewGcon initiallize and return Gcon struct.
 func NewGcon() *Gcon {
 
 	g := &Gcon{
-		Store: make(Store),
-		Logger: Logger{
-			Spin: spinner.New(spinner.CharSets[14], 150*time.Millisecond),
-		},
+		Store:  make(Store),
+		Logger: Logger{},
 	}
-	g.Spin.Color("red")
-	g.Spin.Stop()
 	return g
 }
 
@@ -796,35 +794,96 @@ func (g *Gcon) typeChange(src string) interface{} {
 // Infof is wrapper of sugar.Infof.
 func (g *Gcon) Infof(template string, args ...interface{}) {
 
-	g.Spin.Stop()
-	defer g.Spin.Start()
-	fn := g.Get("_FUNC_NAME")
-	if fn == nil {
-		fn = ""
-	} else {
-		fn = fn.(string)
-	}
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
 	if g.Sugar != nil {
-		g.Sugar.Infof(pre+template, args...)
+		g.Sugar.Infof(g.makeMsgf(template), args...)
+	}
+}
+
+// Info is wrapper of sugar.Info.
+func (g *Gcon) Info(args ...interface{}) {
+
+	if g.Sugar != nil {
+		g.Sugar.Info(g.makeMsg(args))
 	}
 }
 
 // Debugf is wrapper of sugar.Debugf.
 func (g *Gcon) Debugf(template string, args ...interface{}) {
 
-	if env.DEBUG {
-		g.Spin.Stop()
-		defer g.Spin.Start()
-		fn := g.Get("_FUNC_NAME")
-		if fn == nil {
-			fn = ""
-		} else {
-			fn = fn.(string)
-		}
-		pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
-		if g.Sugar != nil {
-			g.Sugar.Debugf(pre+template, args...)
+	if g.Sugar != nil {
+		g.Sugar.Debugf(g.makeMsgf(template), args...)
+	}
+}
+
+// Debug is wrapper of sugar.Debug.
+func (g *Gcon) Debug(args ...interface{}) {
+
+	if g.Sugar != nil {
+		g.Sugar.Debug(g.makeMsg(args))
+	}
+}
+
+// Errorf is wrapper of sugar.Errorf.
+func (g *Gcon) Errorf(template string, args ...interface{}) {
+
+	if g.Sugar != nil {
+		g.Sugar.Errorf(g.makeMsgf(template), args...)
+	}
+}
+
+// Error is wrapper of sugar.Error.
+func (g *Gcon) Error(args ...interface{}) {
+
+	if g.Sugar != nil {
+		g.Sugar.Error(g.makeMsg(args))
+	}
+}
+
+func (g *Gcon) makeMsg(args ...interface{}) []interface{} {
+
+	fn := g.Get(FuncName)
+	if fn == nil {
+		fn = ""
+	} else {
+		fn = fn.(string)
+	}
+	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]:", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+	return append([]interface{}{pre}, args)
+}
+
+func (g *Gcon) makeMsgf(template string) string {
+
+	fn := g.Get(FuncName)
+	if fn == nil {
+		fn = ""
+	} else {
+		fn = fn.(string)
+	}
+	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+	return pre + template
+}
+
+func loopPrint() {
+
+	writer := uilive.New()
+	writer.Start()
+	tis := make([]TaskInfo, 0)
+
+	for {
+
+		select {
+		case ti := <-chTask:
+			tis = append(tis, ti)
+		case <-time.After(time.Millisecond * 10):
+			// prints := make([]string, 0)
+			for _, ti := range tis {
+				// prints = append(prints, fmt.Sprintf("[%v] [%v] [%v] [%v]", ti.Path, ti.ID, ti.ProType, ti.Func))
+				fmt.Fprintf(writer, "[%v] [%v] [%v] [%v]\n", ti.Path, ti.ID, ti.ProType, ti.Func)
+			}
+			// print := strings.Join(prints, "\n")
+			// fmt.Fprintln(writer, print)
+			writer.Flush()
 		}
 	}
+
 }
