@@ -36,6 +36,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/ulule/deepcopier"
 	"github.com/yukimemi/core"
 	"github.com/yukimemi/file"
 	"go.uber.org/zap"
@@ -113,6 +114,11 @@ type FuncInfo struct {
 	ID   int
 	Name string
 	Done bool
+}
+
+// ArgsDef is default args.
+type ArgsDef struct {
+	Async bool
 }
 
 // Args is func arg.
@@ -371,8 +377,6 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			Done: false,
 		}
 		g.Set(FuncName, g.Ti.Name, false)
-		chTask <- g.Ti
-		g.Infof("--- Func Start ---")
 
 		// func exists check.
 		if _, ok := funcs[f.Name]; !ok {
@@ -383,6 +387,14 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 		if err != nil {
 			return err
 		}
+
+		// Check async.
+		if v, ok := a.(map[interface{}]interface{})["async"]; ok && v {
+			// Copy Gcon.
+
+		}
+		g.Infof("--- Func Start ---")
+		chTask <- g.Ti
 		next, err := funcs[f.Name](g, a.(map[interface{}]interface{}))
 		if err != nil && g.Ti.ProType == Normal {
 			errTi := g.Ti
@@ -797,6 +809,13 @@ func NewGcon() *Gcon {
 		Logger: Logger{},
 	}
 	return g
+}
+
+// CopyGcon deep copy Gcon struct.
+func (g *Gcon) CopyGcon() (*Gcon, error) {
+	dst := NewGcon()
+	err := deepcopier.Copy(g).To(dst)
+	return dst, err
 }
 
 func (g *Gcon) typeChange(src string) interface{} {

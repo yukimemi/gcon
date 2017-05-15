@@ -7,6 +7,8 @@ func init() {
 // ArgsSet is SetStore func args.
 type ArgsSet struct {
 	Sets []Set `validate:"required,dive,required"`
+
+	ArgsDef
 }
 
 // Set is set key value list.

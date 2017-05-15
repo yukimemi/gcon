@@ -15,6 +15,8 @@ func init() {
 // ArgsCopy is Copy func args.
 type ArgsCopy struct {
 	Pairs []Pair `validate:"required,dive,required"`
+
+	ArgsDef
 }
 
 // Pair is copy src dst pair.

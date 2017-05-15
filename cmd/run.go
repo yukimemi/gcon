@@ -7,6 +7,8 @@ func init() {
 // ArgsRun is Run func args.
 type ArgsRun struct {
 	Targets []Target `validate:"required,dive,required"`
+
+	ArgsDef
 }
 
 // Target is task info.

@@ -8,6 +8,8 @@ func init() {
 type ArgsLog struct {
 	Msg    string `validate:"required"`
 	Stdout bool
+
+	ArgsDef
 }
 
 // Log output msg.
