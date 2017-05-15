@@ -23,6 +23,7 @@ type Pair struct {
 	Dst     string `validate:"required"`
 	Recurse bool
 	Filter  Filter
+	Force   bool
 }
 
 // Filter is file and directory filter.
@@ -65,7 +66,7 @@ func (g *Gcon) Copy(args Args) (TaskInfo, error) {
 			} else {
 				os.MkdirAll(filepath.Dir(dstPath), os.ModePerm)
 				g.Debugf("[%v] -> [%v] (before)", info.Path, dstPath)
-				n, err := file.Copy(info.Path, dstPath, false)
+				n, err := file.Copy(info.Path, dstPath, pair.Force)
 				if err != nil {
 					return TaskInfo{}, err
 				}

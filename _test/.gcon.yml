@@ -58,7 +58,7 @@ tasks:
           msg: log 4
 
 log:
-  level: debug
+  level: info
   output: true
   encoding: console
   encoderConfig:

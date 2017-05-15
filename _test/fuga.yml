@@ -27,6 +27,7 @@ tasks:
               filter:
                 ignores: ["${@date(2006-01-02-15-04)}"]
               recurse: true
+              force: true
       - func: Run
         args:
           targets:

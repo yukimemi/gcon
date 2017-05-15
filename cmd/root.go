@@ -99,13 +99,20 @@ type TaskInfo struct {
 	Path    string
 	ID      string
 	ProType ProcessType
-	Func    string
+	FuncInfo
 }
 
 // Func is function struct.
 type Func struct {
 	Name string `mapstructure:"func" yaml:"func"`
 	Args Args   `mapstructure:"args" yaml:"args"`
+}
+
+// FuncInfo is function information.
+type FuncInfo struct {
+	ID   int
+	Name string
+	Done bool
 }
 
 // Args is func arg.
@@ -131,6 +138,8 @@ type Gcon struct {
 	Ci CfgInfo
 	// Now TaskInfo.
 	Ti TaskInfo
+	// Now FuncInfo.
+	Fi FuncInfo
 
 	Store
 	Logger
@@ -144,7 +153,10 @@ var (
 	funcs      = make(Funcs)
 	cfgInfos   = make(CfgInfos, 0)
 	cfgInfosMu = new(sync.Mutex)
+	funcMu     = new(sync.Mutex)
+	funcID     = 0
 	chTask     = make(chan TaskInfo)
+	allDone    = make(chan struct{})
 
 	validate = validator.New()
 
@@ -287,6 +299,7 @@ func runE(cmd *cobra.Command, args []string) error {
 	startGcon.setTaskInfo(ti)
 
 	color.Green("Start: %v", time.Now().Format("2006-01-02 15:04:05.000"))
+	fmt.Println("")
 
 	go loopPrint()
 
@@ -296,6 +309,10 @@ func runE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	allDone <- struct{}{}
+	<-allDone
+
+	fmt.Println("")
 	color.Green("End: %v", time.Now().Format("2006-01-02 15:04:05.000"))
 	return nil
 }
@@ -348,8 +365,12 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Execute process.
 	for _, f := range ps {
-		g.Ti.Func = f.Name
-		g.Set(FuncName, g.Ti.Func, false)
+		g.Ti.FuncInfo = FuncInfo{
+			ID:   getFuncID(),
+			Name: f.Name,
+			Done: false,
+		}
+		g.Set(FuncName, g.Ti.Name, false)
 		chTask <- g.Ti
 		g.Infof("--- Func Start ---")
 
@@ -379,7 +400,9 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			}
 		}
 
-		time.Sleep(time.Millisecond * 500)
+		// time.Sleep(time.Millisecond * 500)
+		g.Ti.FuncInfo.Done = true
+		chTask <- g.Ti
 		g.Infof("--- Func End ---")
 	}
 
@@ -868,22 +891,54 @@ func loopPrint() {
 	writer := uilive.New()
 	writer.Start()
 	tis := make([]TaskInfo, 0)
+	spin := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	index := 0
+
+	green := color.New(color.FgGreen).SprintFunc()
+	yellow := color.New(color.FgYellow).SprintFunc()
 
 	for {
 
 		select {
 		case ti := <-chTask:
-			tis = append(tis, ti)
-		case <-time.After(time.Millisecond * 10):
-			// prints := make([]string, 0)
-			for _, ti := range tis {
-				// prints = append(prints, fmt.Sprintf("[%v] [%v] [%v] [%v]", ti.Path, ti.ID, ti.ProType, ti.Func))
-				fmt.Fprintf(writer, "[%v] [%v] [%v] [%v]\n", ti.Path, ti.ID, ti.ProType, ti.Func)
+			exist := false
+			for i, t := range tis {
+				if t.FuncInfo.ID == ti.FuncInfo.ID {
+					tis[i] = ti
+					exist = true
+					break
+				}
 			}
-			// print := strings.Join(prints, "\n")
-			// fmt.Fprintln(writer, print)
+			if !exist {
+				tis = append(tis, ti)
+			}
+		case <-time.After(time.Millisecond * 100):
+			index = (index + 1) % len(spin)
+			for _, ti := range tis {
+				if ti.FuncInfo.Done {
+					fmt.Fprintf(writer, green(" %v [%v] [%v] [%v] [%v]                    \n"), "✔", ti.Path, ti.ID, ti.ProType, ti.FuncInfo.Name)
+				} else {
+					fmt.Fprintf(writer, yellow(" %v  [%v] [%v] [%v] [%v]                    \n"), spin[index], ti.Path, ti.ID, ti.ProType, ti.FuncInfo.Name)
+				}
+			}
 			writer.Flush()
+		case <-allDone:
+			for _, ti := range tis {
+				fmt.Fprintf(writer, green(" %v [%v] [%v] [%v] [%v]                    \n"), "✔", ti.Path, ti.ID, ti.ProType, ti.FuncInfo.Name)
+			}
+			writer.Flush()
+			close(allDone)
+			return
 		}
+
 	}
 
+}
+
+func getFuncID() int {
+	funcMu.Lock()
+	defer funcMu.Unlock()
+
+	funcID++
+	return funcID
 }
