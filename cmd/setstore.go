@@ -18,17 +18,17 @@ type Set struct {
 }
 
 // SetStore set key val to Store.
-func (g *Gcon) SetStore(args Args) (TaskInfo, error) {
+func (g *Gcon) SetStore(args Args) (*TaskInfo, error) {
 
 	a := &ArgsSet{}
 	err := g.ParseArgs(args, a)
 	if err != nil {
-		return TaskInfo{}, err
+		return nil, err
 	}
 
 	for _, set := range a.Sets {
 		g.Set(set.Key, set.Val, true)
 	}
 
-	return TaskInfo{}, nil
+	return nil, nil
 }
