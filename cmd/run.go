@@ -27,7 +27,7 @@ func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 	}
 
 	for _, target := range a.Targets {
-		ti := &TaskInfo{
+		ti := TaskInfo{
 			ID:      target.ID,
 			Path:    target.File,
 			ProType: Normal,
