@@ -375,27 +375,33 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 		}
 
 		execute := func(g *Gcon, f Func, a interface{}) error {
+			g.Infof("--- Func Start ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
+			chGcon <- *g
+			g.Set(FuncName, g.Fi.Name, false)
+			// Backup gcon.
+			_g := *g
 			defer func() {
-				time.Sleep(time.Millisecond * 500)
+				// time.Sleep(time.Millisecond * 500)
+				// Restore gcon.
+				g.Ci, g.Ti, g.Fi = _g.Ci, _g.Ti, _g.Fi
+				g.Set(FuncName, g.Fi.Name, false)
 				g.Fi.Done = true
 				chGcon <- *g
 				g.Infof("--- Func End ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
 			}()
-			g.Infof("--- Func Start ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
-			chGcon <- *g
-			g.Set(FuncName, g.Fi.Name, false)
-			_g := *g
 			next, err := funcs[f.Name](g, a.(map[interface{}]interface{}))
-			g.Ci, g.Ti, g.Fi = _g.Ci, _g.Ti, _g.Fi
-			g.Set(FuncName, g.Fi.Name, false)
-			if err != nil && g.Ti.ProType == Normal {
-				errTi := g.Ti
-				errTi.ProType = Error
-				err2 := g.Engine(errTi)
-				if err2 != nil {
-					return errors.Wrap(err, err2.Error())
+			_g.Fi.Err = err
+			if err != nil {
+				g.Errorf("Error: [%v]", err)
+				if g.Ti.ProType == Normal {
+					errTi := g.Ti
+					errTi.ProType = Error
+					err2 := g.Engine(errTi)
+					if err2 != nil {
+						return errors.Wrap(err, err2.Error())
+					}
+					return err
 				}
-				return err
 			}
 			if next != nil {
 				err := g.Engine(*next)
@@ -422,8 +428,7 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			// Execute asynchronous.
 			go func(g *Gcon, f Func, a interface{}) {
 				defer g.Fi.Wg.Done()
-				g.Fi.Err = execute(g, f, a)
-				chGcon <- *g
+				execute(g, f, a)
 			}(copyG, *f, a)
 		} else {
 			// Execute sync.
@@ -431,8 +436,6 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			if err != nil {
 				return err
 			}
-			g.Fi.Err = err
-			chGcon <- *g
 		}
 	}
 
@@ -891,6 +894,7 @@ func loopPrint() {
 	wait := false
 
 	green := color.New(color.FgGreen).SprintFunc()
+	red := color.New(color.FgRed).SprintFunc()
 	yellow := color.New(color.FgYellow).SprintFunc()
 
 	for {
@@ -916,7 +920,11 @@ func loopPrint() {
 					if wait {
 						doneCnt++
 					}
-					fmt.Fprintf(writer, green("%3s   [%s] [%s] [%s] [%s]                    \n"), "✓", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					if g.Fi.Err != nil {
+						fmt.Fprintf(writer, red("%3s   [%s] [%s] [%s] [%s]                    \n"), "✘", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					} else {
+						fmt.Fprintf(writer, green("%3s   [%s] [%s] [%s] [%s]                    \n"), "✓", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					}
 				} else {
 					fmt.Fprintf(writer, yellow("%3s   [%s] [%s] [%s] [%s]                    \n"), spin[index], g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 				}
