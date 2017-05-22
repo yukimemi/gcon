@@ -7,6 +7,8 @@ func init() {
 // ArgsRun is Run func args.
 type ArgsRun struct {
 	Targets []Target `validate:"required,dive,required"`
+
+	ArgsDef
 }
 
 // Target is task info.
@@ -16,12 +18,12 @@ type Target struct {
 }
 
 // Run output msg.
-func (g *Gcon) Run(args Args) (TaskInfo, error) {
+func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 
 	a := &ArgsRun{}
 	err := g.ParseArgs(args, a)
 	if err != nil {
-		return TaskInfo{}, err
+		return nil, err
 	}
 
 	for _, target := range a.Targets {
@@ -35,9 +37,9 @@ func (g *Gcon) Run(args Args) (TaskInfo, error) {
 		}
 		err := g.Engine(ti)
 		if err != nil {
-			return TaskInfo{}, err
+			return nil, err
 		}
 	}
 
-	return TaskInfo{}, nil
+	return nil, nil
 }

@@ -26,6 +26,7 @@ tasks:
                 matches: [e$]
                 ignores: [\/g]
               recurse: true
+          async: copy
       - func: Run
         args:
           targets:
