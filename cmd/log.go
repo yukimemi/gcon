@@ -8,15 +8,17 @@ func init() {
 type ArgsLog struct {
 	Msg    string `validate:"required"`
 	Stdout bool
+
+	ArgsDef
 }
 
 // Log output msg.
-func (g *Gcon) Log(args Args) (TaskInfo, error) {
+func (g *Gcon) Log(args Args) (*TaskInfo, error) {
 
 	a := &ArgsLog{}
 	err := g.ParseArgs(args, a)
 	if err != nil {
-		return TaskInfo{}, err
+		return nil, err
 	}
 	if a.Stdout {
 		// fmt.Println(a.Msg)
@@ -24,5 +26,5 @@ func (g *Gcon) Log(args Args) (TaskInfo, error) {
 
 	g.Infof(a.Msg)
 
-	return TaskInfo{}, nil
+	return nil, nil
 }

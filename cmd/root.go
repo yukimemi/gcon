@@ -1,22 +1,4 @@
 // Copyright © 2017 yukimemi <yukimemi@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
 
 package cmd
 
@@ -36,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/ulule/deepcopier"
 	"github.com/yukimemi/core"
 	"github.com/yukimemi/file"
 	"go.uber.org/zap"
@@ -73,17 +56,17 @@ type ProcessType int
 type CfgInfo struct {
 	Path string
 	Init bool
-	Cfg
+	*Cfg
 }
 
 // Cfg is gcon config file struct.
 type Cfg struct {
-	Tasks []Task     `mapstructure:"tasks" yaml:"tasks"`
+	Tasks []*Task    `mapstructure:"tasks" yaml:"tasks"`
 	Log   zap.Config `mapstructure:"log" yaml:"log"`
 }
 
 // CfgInfos is Array of CfgInfo.
-type CfgInfos []CfgInfo
+type CfgInfos []*CfgInfo
 
 // Task is execute task information.
 type Task struct {
@@ -99,7 +82,6 @@ type TaskInfo struct {
 	Path    string
 	ID      string
 	ProType ProcessType
-	FuncInfo
 }
 
 // Func is function struct.
@@ -110,19 +92,27 @@ type Func struct {
 
 // FuncInfo is function information.
 type FuncInfo struct {
-	ID   int
-	Name string
-	Done bool
+	ID    int
+	Name  string
+	Async string
+	Done  bool
+	Wg    *sync.WaitGroup
+	Err   error
+}
+
+// ArgsDef is default args.
+type ArgsDef struct {
+	Async string
 }
 
 // Args is func arg.
 type Args map[interface{}]interface{}
 
 // Process is array of Func.
-type Process []Func
+type Process []*Func
 
 // Funcs is func map.
-type Funcs map[string]func(*Gcon, Args) (TaskInfo, error)
+type Funcs map[string]func(*Gcon, Args) (*TaskInfo, error)
 
 // Store store string data.
 type Store map[string]interface{}
@@ -142,7 +132,7 @@ type Gcon struct {
 	Fi FuncInfo
 
 	Store
-	Logger
+	*Logger
 }
 
 var (
@@ -155,8 +145,10 @@ var (
 	cfgInfosMu = new(sync.Mutex)
 	funcMu     = new(sync.Mutex)
 	funcID     = 0
-	chTask     = make(chan TaskInfo)
+	chGcon     = make(chan Gcon)
 	allDone    = make(chan struct{})
+	asyncFuncs = make(map[string]*FuncInfo)
+	asyncMu    = new(sync.Mutex)
 
 	validate = validator.New()
 
@@ -260,7 +252,7 @@ func initConfig() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(ExitNG)
 	}
-	startGcon.Ci = ci
+	startGcon.Ci = *ci
 	startGcon.Logger.Sugar = z.Sugar()
 
 	cmdPath, err := core.GetCmdPath(os.Args[0])
@@ -309,6 +301,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Wait all func.
 	allDone <- struct{}{}
 	<-allDone
 
@@ -321,11 +314,9 @@ func runE(cmd *cobra.Command, args []string) error {
 func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Restore previous TaskInfo.
-	prevTi := g.Ti
-	defer g.setTaskInfo(prevTi)
+	defer g.setTaskInfo(g.Ti)
 	// Restore previous CfgInfo.
-	prevCi := g.Ci
-	defer g.setCfgInfo(prevCi)
+	defer g.setCfgInfo(g.Ci)
 
 	// Get now CfgInfo by TaskInfo.
 	ci, err := g.getCfgInfo(ti)
@@ -338,7 +329,7 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 	}
 
 	// Set now CfgInfo and TaskInfo.
-	g.setCfgInfo(ci)
+	g.setCfgInfo(*ci)
 	g.setTaskInfo(ti)
 
 	// Execute final process.
@@ -365,14 +356,13 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 	// Execute process.
 	for _, f := range ps {
-		g.Ti.FuncInfo = FuncInfo{
+
+		g.Fi = FuncInfo{
 			ID:   getFuncID(),
 			Name: f.Name,
 			Done: false,
+			Wg:   new(sync.WaitGroup),
 		}
-		g.Set(FuncName, g.Ti.Name, false)
-		chTask <- g.Ti
-		g.Infof("--- Func Start ---")
 
 		// func exists check.
 		if _, ok := funcs[f.Name]; !ok {
@@ -383,27 +373,70 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 		if err != nil {
 			return err
 		}
-		next, err := funcs[f.Name](g, a.(map[interface{}]interface{}))
-		if err != nil && g.Ti.ProType == Normal {
-			errTi := g.Ti
-			errTi.ProType = Error
-			err2 := g.Engine(errTi)
-			if err2 != nil {
-				return errors.Wrap(err, err2.Error())
+
+		execute := func(g *Gcon, f Func, a interface{}) error {
+			g.Infof("--- Func Start ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
+			chGcon <- *g
+			g.Set(FuncName, g.Fi.Name, false)
+			// Backup gcon.
+			_g := *g
+			defer func() {
+				// time.Sleep(time.Millisecond * 500)
+				// Restore gcon.
+				g.Ci, g.Ti, g.Fi = _g.Ci, _g.Ti, _g.Fi
+				g.Set(FuncName, g.Fi.Name, false)
+				g.Fi.Done = true
+				chGcon <- *g
+				g.Infof("--- Func End ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
+			}()
+			next, err := funcs[f.Name](g, a.(map[interface{}]interface{}))
+			_g.Fi.Err = err
+			if err != nil {
+				g.Errorf("Error: [%v]", err)
+				if g.Ti.ProType == Normal {
+					errTi := g.Ti
+					errTi.ProType = Error
+					err2 := g.Engine(errTi)
+					if err2 != nil {
+						return errors.Wrap(err, err2.Error())
+					}
+					return err
+				}
 			}
+			if next != nil {
+				err := g.Engine(*next)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		// Check async.
+		ad := &ArgsDef{}
+		err = g.ParseArgs(a.(map[interface{}]interface{}), ad)
+		if err != nil {
 			return err
 		}
-		if next.ID != "" {
-			err := g.Engine(next)
+		if ad.Async != "" {
+			// Copy Gcon.
+			copyG, err := g.CopyGcon()
+			if err != nil {
+				return err
+			}
+			copyG.Fi.Wg.Add(1)
+			// Execute asynchronous.
+			go func(g *Gcon, f Func, a interface{}) {
+				defer g.Fi.Wg.Done()
+				execute(g, f, a)
+			}(copyG, *f, a)
+		} else {
+			// Execute sync.
+			err := execute(g, *f, a)
 			if err != nil {
 				return err
 			}
 		}
-
-		// time.Sleep(time.Millisecond * 500)
-		g.Ti.FuncInfo.Done = true
-		chTask <- g.Ti
-		g.Infof("--- Func End ---")
 	}
 
 	return nil
@@ -477,10 +510,10 @@ func (g *Gcon) getProcess() (Process, error) {
 	return Process{}, fmt.Errorf("Not found process. task id: [%v] task file: [%v]", g.Ti.ID, g.Ti.Path)
 }
 
-func (g *Gcon) getCfgInfo(ti TaskInfo) (CfgInfo, error) {
+func (g *Gcon) getCfgInfo(ti TaskInfo) (*CfgInfo, error) {
 
 	if ti.Path == g.Ci.Path {
-		return g.Ci, nil
+		return &g.Ci, nil
 	}
 
 	// Search now CfgInfo.
@@ -489,7 +522,7 @@ func (g *Gcon) getCfgInfo(ti TaskInfo) (CfgInfo, error) {
 		// Import cfg file.
 		ci, err := g.importCfg(ti.Path)
 		if err != nil {
-			return CfgInfo{}, err
+			return nil, err
 		}
 		return ci, nil
 	}
@@ -497,7 +530,7 @@ func (g *Gcon) getCfgInfo(ti TaskInfo) (CfgInfo, error) {
 	return ci, nil
 }
 
-func (g *Gcon) importCfg(file string) (CfgInfo, error) {
+func (g *Gcon) importCfg(file string) (*CfgInfo, error) {
 
 	cfgInfosMu.Lock()
 	defer cfgInfosMu.Unlock()
@@ -512,18 +545,18 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 	if err := viper.ReadInConfig(); err == nil {
 		g.Infof("Import config file: [%v]", viper.ConfigFileUsed())
 	} else {
-		return CfgInfo{}, err
+		return nil, err
 	}
 
 	// Load cfg for replace.
 	f, err := ioutil.ReadFile(viper.ConfigFileUsed())
 	if err != nil {
-		return CfgInfo{}, err
+		return nil, err
 	}
 	var a interface{}
 	err = yaml.Unmarshal(f, &a)
 	if err != nil {
-		return CfgInfo{}, err
+		return nil, err
 	}
 
 	cfgMap := make(map[interface{}]interface{})
@@ -532,7 +565,7 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 	if ok {
 		logCfgRep, err := g.replaceAll(logCfg)
 		if err != nil {
-			return CfgInfo{}, err
+			return nil, err
 		}
 		cfgMap["log"] = logCfgRep
 	}
@@ -540,32 +573,32 @@ func (g *Gcon) importCfg(file string) (CfgInfo, error) {
 	// Load and store cfg.
 	tb, err := yaml.Marshal(cfgMap)
 	if err != nil {
-		return CfgInfo{}, err
+		return nil, err
 	}
 
 	cfg := Cfg{}
 	err = yaml.Unmarshal(tb, &cfg)
 	if err != nil {
-		return CfgInfo{}, err
+		return nil, err
 	}
 
 	// Set cfgInfo to cfgInfos.
-	ci := CfgInfo{
+	ci := &CfgInfo{
 		Path: viper.ConfigFileUsed(),
 		Init: false,
-		Cfg:  cfg,
+		Cfg:  &cfg,
 	}
 	cfgInfos = append(cfgInfos, ci)
 
 	return ci, nil
 }
 
-func (g *Gcon) searchCfgInfo(ti TaskInfo) (CfgInfo, error) {
+func (g *Gcon) searchCfgInfo(ti TaskInfo) (*CfgInfo, error) {
 
 	// Search now CfgInfo.
 	for _, task := range g.Ci.Tasks {
 		if task.ID == ti.ID {
-			return g.Ci, nil
+			return &g.Ci, nil
 		}
 	}
 
@@ -584,49 +617,7 @@ func (g *Gcon) searchCfgInfo(ti TaskInfo) (CfgInfo, error) {
 		}
 	}
 
-	return CfgInfo{}, fmt.Errorf("Not found task ID: [%v] Path: [%v] ", ti.ID, ti.Path)
-}
-
-func (g *Gcon) checkCfg(cfg Cfg) error {
-
-	// Check func.
-	check := func(ps Process) error {
-		// for _, f := range ps {
-		// Check func name.
-		// fn, ok := funcs[f.Name]
-		// if !ok {
-		// 	return fmt.Errorf("func [%v] is not found", f.Name)
-		// }
-		// Check args.
-		// err := fn.s.Parse(f.Args)
-		// if err != nil {
-		// 	return err
-		// }
-		// }
-
-		return nil
-	}
-
-	// Check all task.
-	for _, task := range cfg.Tasks {
-		// Check normal process.
-		err := check(task.Normal)
-		if err != nil {
-			return err
-		}
-		// Check error process.
-		err = check(task.Error)
-		if err != nil {
-			return err
-		}
-		// Check final process.
-		err = check(task.Final)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return nil, fmt.Errorf("Not found task ID: [%v] Path: [%v] ", ti.ID, ti.Path)
 }
 
 func (g *Gcon) init() error {
@@ -637,9 +628,9 @@ func (g *Gcon) init() error {
 
 	cfgInfosMu.Lock()
 
-	for i, ci := range cfgInfos {
+	for _, ci := range cfgInfos {
 		if ci.Path == g.Ci.Path {
-			cfgInfos[i].Init = true
+			ci.Init = true
 			g.Ci.Init = true
 			cfgInfosMu.Unlock()
 			ti := g.Ti
@@ -793,10 +784,29 @@ func (g *Gcon) ParseArgs(args Args, ptr interface{}) error {
 func NewGcon() *Gcon {
 
 	g := &Gcon{
+		Ci:     CfgInfo{},
+		Ti:     TaskInfo{},
+		Fi:     FuncInfo{},
 		Store:  make(Store),
-		Logger: Logger{},
+		Logger: new(Logger),
 	}
 	return g
+}
+
+// CopyGcon deep copy Gcon struct.
+func (g *Gcon) CopyGcon() (*Gcon, error) {
+
+	dst := NewGcon()
+	err := deepcopier.Copy(g).To(dst)
+
+	dst.Store = make(Store)
+
+	for k, v := range g.Store {
+		dst.Store[k] = v
+	}
+
+	return dst, err
+
 }
 
 func (g *Gcon) typeChange(src string) interface{} {
@@ -864,25 +874,13 @@ func (g *Gcon) Error(args ...interface{}) {
 
 func (g *Gcon) makeMsg(args ...interface{}) []interface{} {
 
-	fn := g.Get(FuncName)
-	if fn == nil {
-		fn = ""
-	} else {
-		fn = fn.(string)
-	}
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]:", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]:", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 	return append([]interface{}{pre}, args)
 }
 
 func (g *Gcon) makeMsgf(template string) string {
 
-	fn := g.Get(FuncName)
-	if fn == nil {
-		fn = ""
-	} else {
-		fn = fn.(string)
-	}
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 	return pre + template
 }
 
@@ -890,45 +888,54 @@ func loopPrint() {
 
 	writer := uilive.New()
 	writer.Start()
-	tis := make([]TaskInfo, 0)
+	gs := make([]*Gcon, 0)
 	spin := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	index := 0
+	wait := false
 
 	green := color.New(color.FgGreen).SprintFunc()
+	red := color.New(color.FgRed).SprintFunc()
 	yellow := color.New(color.FgYellow).SprintFunc()
 
 	for {
 
 		select {
-		case ti := <-chTask:
+		case gc := <-chGcon:
 			exist := false
-			for i, t := range tis {
-				if t.FuncInfo.ID == ti.FuncInfo.ID {
-					tis[i] = ti
+			for _, g := range gs {
+				if g.Fi.ID == gc.Fi.ID {
+					*g = gc
 					exist = true
 					break
 				}
 			}
 			if !exist {
-				tis = append(tis, ti)
+				gs = append(gs, &gc)
 			}
 		case <-time.After(time.Millisecond * 100):
 			index = (index + 1) % len(spin)
-			for _, ti := range tis {
-				if ti.FuncInfo.Done {
-					fmt.Fprintf(writer, green(" %v [%v] [%v] [%v] [%v]                    \n"), "✔", ti.Path, ti.ID, ti.ProType, ti.FuncInfo.Name)
+			doneCnt := 0
+			for _, g := range gs {
+				if g.Fi.Done {
+					if wait {
+						doneCnt++
+					}
+					if g.Fi.Err != nil {
+						fmt.Fprintf(writer, red("%3s   [%s] [%s] [%s] [%s]                    \n"), "✘", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					} else {
+						fmt.Fprintf(writer, green("%3s   [%s] [%s] [%s] [%s]                    \n"), "✓", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					}
 				} else {
-					fmt.Fprintf(writer, yellow(" %v  [%v] [%v] [%v] [%v]                    \n"), spin[index], ti.Path, ti.ID, ti.ProType, ti.FuncInfo.Name)
+					fmt.Fprintf(writer, yellow("%3s   [%s] [%s] [%s] [%s]                    \n"), spin[index], g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 				}
 			}
 			writer.Flush()
-		case <-allDone:
-			for _, ti := range tis {
-				fmt.Fprintf(writer, green(" %v [%v] [%v] [%v] [%v]                    \n"), "✔", ti.Path, ti.ID, ti.ProType, ti.FuncInfo.Name)
+			if wait && doneCnt == len(gs) {
+				close(allDone)
+				return
 			}
-			writer.Flush()
-			close(allDone)
-			return
+		case <-allDone:
+			wait = true
 		}
 
 	}

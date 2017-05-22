@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yukimemi/file"
 )
@@ -15,6 +16,8 @@ func init() {
 // ArgsCopy is Copy func args.
 type ArgsCopy struct {
 	Pairs []Pair `validate:"required,dive,required"`
+
+	ArgsDef
 }
 
 // Pair is copy src dst pair.
@@ -33,12 +36,12 @@ type Filter struct {
 }
 
 // Copy copy file or directory src to dst.
-func (g *Gcon) Copy(args Args) (TaskInfo, error) {
+func (g *Gcon) Copy(args Args) (*TaskInfo, error) {
 
 	a := &ArgsCopy{}
 	err := g.ParseArgs(args, a)
 	if err != nil {
-		return TaskInfo{}, err
+		return nil, err
 	}
 
 	for _, pair := range a.Pairs {
@@ -48,11 +51,11 @@ func (g *Gcon) Copy(args Args) (TaskInfo, error) {
 			Recurse: pair.Recurse,
 		})
 		if err != nil {
-			return TaskInfo{}, err
+			return nil, err
 		}
 		for info := range infos {
 			if info.Err != nil {
-				return TaskInfo{}, info.Err
+				return nil, info.Err
 			}
 
 			dstPath := strings.Replace(info.Path, pair.Src, pair.Dst, 1)
@@ -61,19 +64,21 @@ func (g *Gcon) Copy(args Args) (TaskInfo, error) {
 				g.Debugf("Mkdir: [%v]", dstPath)
 				err := os.MkdirAll(dstPath, os.ModePerm)
 				if err != nil {
-					return TaskInfo{}, err
+					return nil, err
 				}
 			} else {
 				os.MkdirAll(filepath.Dir(dstPath), os.ModePerm)
 				g.Debugf("[%v] -> [%v] (before)", info.Path, dstPath)
 				n, err := file.Copy(info.Path, dstPath, pair.Force)
 				if err != nil {
-					return TaskInfo{}, err
+					return nil, err
 				}
 				g.Infof("[%v] -> [%v] (%v bytes)", info.Path, dstPath, n)
 			}
 		}
 	}
 
-	return TaskInfo{}, nil
+	time.Sleep(10 * time.Second)
+
+	return nil, nil
 }
