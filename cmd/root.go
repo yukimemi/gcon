@@ -363,7 +363,6 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			Done: false,
 			Wg:   new(sync.WaitGroup),
 		}
-		g.Set(FuncName, g.Fi.Name, false)
 
 		// func exists check.
 		if _, ok := funcs[f.Name]; !ok {
@@ -380,11 +379,15 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 				time.Sleep(time.Millisecond * 500)
 				g.Fi.Done = true
 				chGcon <- *g
-				g.Infof("--- Func End ID: [%v] ---", g.Fi.ID)
+				g.Infof("--- Func End ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
 			}()
-			g.Infof("--- Func Start ID: [%v] ---", g.Fi.ID)
+			g.Infof("--- Func Start ID: [%v] Name: [%v] ---", g.Fi.ID, g.Fi.Name)
 			chGcon <- *g
+			g.Set(FuncName, g.Fi.Name, false)
+			_g := *g
 			next, err := funcs[f.Name](g, a.(map[interface{}]interface{}))
+			g.Ci, g.Ti, g.Fi = _g.Ci, _g.Ti, _g.Fi
+			g.Set(FuncName, g.Fi.Name, false)
 			if err != nil && g.Ti.ProType == Normal {
 				errTi := g.Ti
 				errTi.ProType = Error
@@ -874,13 +877,7 @@ func (g *Gcon) makeMsg(args ...interface{}) []interface{} {
 
 func (g *Gcon) makeMsgf(template string) string {
 
-	fn := g.Get(FuncName)
-	if fn == nil {
-		fn = ""
-	} else {
-		fn = fn.(string)
-	}
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, fn)
+	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 	return pre + template
 }
 
@@ -903,7 +900,6 @@ func loopPrint() {
 			exist := false
 			for _, g := range gs {
 				if g.Fi.ID == gc.Fi.ID {
-					g.Infof("Same ID: [%v] Name: [%v] Done: [%v]", g.Fi.ID, g.Fi.Name, g.Fi.Done)
 					*g = gc
 					exist = true
 					break
@@ -920,9 +916,9 @@ func loopPrint() {
 					if wait {
 						doneCnt++
 					}
-					fmt.Fprintf(writer, green(" %v [%v] [%v] [%v] [%v]                    \n"), "✔", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					fmt.Fprintf(writer, green("%3s   [%s] [%s] [%s] [%s]                    \n"), "✓", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 				} else {
-					fmt.Fprintf(writer, yellow(" %v  [%v] [%v] [%v] [%v]                    \n"), spin[index], g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					fmt.Fprintf(writer, yellow("%3s   [%s] [%s] [%s] [%s]                    \n"), spin[index], g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 				}
 			}
 			writer.Flush()
