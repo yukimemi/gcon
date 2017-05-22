@@ -23,12 +23,25 @@ tasks:
         args:
           pairs:
             - src: ${_CFG_DIR}
-              dst: ${_PWD}/.gomi
+              dst: ${_PWD}/.gomi/copy1
+              filter:
+                ignores: ["${@date(2006-01-02-15-04)}"]
+              recurse: true
+              force: true
+          async: copy
+      - func: Copy
+        args:
+          pairs:
+            - src: ${_CFG_DIR}
+              dst: ${_PWD}/.gomi/copy2
               filter:
                 ignores: ["${@date(2006-01-02-15-04)}"]
               recurse: true
               force: true
           async: fuga
+      - func: Wait
+        args:
+          targets: [copy]
       - func: Run
         args:
           targets:

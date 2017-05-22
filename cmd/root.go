@@ -147,7 +147,8 @@ var (
 	funcID     = 0
 	chGcon     = make(chan Gcon)
 	allDone    = make(chan struct{})
-	asyncFuncs = make(map[string]*FuncInfo)
+	asyncFi    = make(chan FuncInfo)
+	asyncFis   = make([]*FuncInfo, 0)
 	asyncMu    = new(sync.Mutex)
 
 	validate = validator.New()
@@ -293,7 +294,10 @@ func runE(cmd *cobra.Command, args []string) error {
 	color.Green("Start: %v", time.Now().Format("2006-01-02 15:04:05.000"))
 	fmt.Println("")
 
+	// Print func state.
 	go loopPrint()
+	// Wait asynchronous funcs.
+	go waitFuncs()
 
 	err := startGcon.Engine(ti)
 	if err != nil {
@@ -424,7 +428,9 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 			if err != nil {
 				return err
 			}
+			copyG.Fi.Async = ad.Async
 			copyG.Fi.Wg.Add(1)
+			asyncFi <- copyG.Fi
 			// Execute asynchronous.
 			go func(g *Gcon, f Func, a interface{}) {
 				defer g.Fi.Wg.Done()
@@ -948,4 +954,15 @@ func getFuncID() int {
 
 	funcID++
 	return funcID
+}
+
+func waitFuncs() {
+
+	for {
+		af := <-asyncFi
+		asyncMu.Lock()
+		asyncFis = append(asyncFis, &af)
+		asyncMu.Unlock()
+	}
+
 }
