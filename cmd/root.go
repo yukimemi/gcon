@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -297,7 +298,9 @@ func runE(cmd *cobra.Command, args []string) error {
 	// Print func state.
 	go loopPrint()
 	// Wait asynchronous funcs.
-	go waitFuncs()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go addAsyncFunc(ctx)
 
 	err := startGcon.Engine(ti)
 	if err != nil {
@@ -899,9 +902,9 @@ func loopPrint() {
 	index := 0
 	wait := false
 
-	green := color.New(color.FgGreen).SprintFunc()
-	red := color.New(color.FgRed).SprintFunc()
-	yellow := color.New(color.FgYellow).SprintFunc()
+	green := color.New(color.FgGreen).FprintfFunc()
+	red := color.New(color.FgRed).FprintfFunc()
+	yellow := color.New(color.FgYellow).FprintfFunc()
 
 	for {
 
@@ -927,12 +930,12 @@ func loopPrint() {
 						doneCnt++
 					}
 					if g.Fi.Err != nil {
-						fmt.Fprintf(writer, red("%3s   [%s] [%s] [%s] [%s]                    \n"), "✘", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+						red(writer, "%3s   [%s] [%s] [%s] [%s]                    \n", "✘", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 					} else {
-						fmt.Fprintf(writer, green("%3s   [%s] [%s] [%s] [%s]                    \n"), "✓", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+						green(writer, "%3s   [%s] [%s] [%s] [%s]                    \n", "✓", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 					}
 				} else {
-					fmt.Fprintf(writer, yellow("%3s   [%s] [%s] [%s] [%s]                    \n"), spin[index], g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+					yellow(writer, "%3s   [%s] [%s] [%s] [%s]                    \n", spin[index], g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
 				}
 			}
 			writer.Flush()
@@ -956,13 +959,18 @@ func getFuncID() int {
 	return funcID
 }
 
-func waitFuncs() {
+func addAsyncFunc(ctx context.Context) {
 
 	for {
-		af := <-asyncFi
-		asyncMu.Lock()
-		asyncFis = append(asyncFis, &af)
-		asyncMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			af := <-asyncFi
+			asyncMu.Lock()
+			asyncFis = append(asyncFis, &af)
+			asyncMu.Unlock()
+		}
 	}
 
 }
