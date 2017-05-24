@@ -27,12 +27,26 @@ tasks:
                 ignores: [\/g]
               recurse: true
           async: copy
+      - func: Exec
+        args:
+          cmds:
+            - cmd: ls
+              arg: -la
       - func: Run
         args:
           targets:
             - id: Hoge
             - id: Fuga
               file: _test/fuga.yml
+      - func: Exec
+        args:
+          cmds:
+            - cmd: lsls
+      - func: Exec
+        args:
+          cmds:
+            - cmd: gsr
+              arg: --status --ahead --behind
       - func: Log
         args:
           msg: "log 1 ${@date(2006-01-02 15:04)}"
