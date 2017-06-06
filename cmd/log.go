@@ -12,11 +12,6 @@ type ArgsLog struct {
 	ArgsDef
 }
 
-// Parse parse ArgsLog.
-func (a *ArgsLog) Parse(args Args) {
-	return ParseArg(args, ad)
-}
-
 // Log output msg.
 func (g *Gcon) Log(args Args) (*TaskInfo, error) {
 

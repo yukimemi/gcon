@@ -1,3 +1,4 @@
+EvalSymlinks: too many links
 package cmd
 
 func init() {
@@ -31,7 +32,7 @@ func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 
 func (g *Gcon) run(ar ArgsRun) (*TaskInfo, error) {
 
-	for _, target := range ar.Targets {
+	for _, target := range a.Targets {
 		ti := TaskInfo{
 			ID:      target.ID,
 			Path:    target.File,

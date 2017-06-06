@@ -26,18 +26,13 @@ type Cmd struct {
 	IP      string
 	Sjis    bool
 	Results []Result
-	Other   Target
+	Other   Target `validate:"-"`
 }
 
 // Result is exit code pattern task.
 type Result struct {
 	Code int
 	Target
-}
-
-// Parse parse ArgsExec.
-func (a *ArgsExec) Parse(args Args) {
-	return ParseArg(args, ad)
 }
 
 // Exec execute process.
@@ -106,7 +101,7 @@ func (g *Gcon) Exec(args Args) (*TaskInfo, error) {
 
 		// Run result or other target.
 		ar := ArgsRun{Targets: []Target{*target}}
-		ti, err := g.Run(ar)
+		ti, err := g.run(ar)
 		if err != nil {
 			return ti, err
 		}

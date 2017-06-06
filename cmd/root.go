@@ -50,11 +50,6 @@ const (
 	FuncName = "_FUNC_NAME"
 )
 
-// ArgParser is func args.
-type ArgParser interface {
-	Parse(Args) error
-}
-
 // ProcessType is type of process.
 type ProcessType int
 
@@ -118,7 +113,7 @@ type Args map[interface{}]interface{}
 type Process []*Func
 
 // Funcs is func map.
-type Funcs map[string]func(*Gcon, ArgParser) (*TaskInfo, error)
+type Funcs map[string]func(*Gcon, Args) (*TaskInfo, error)
 
 // Store store string data.
 type Store map[string]interface{}
@@ -200,11 +195,6 @@ func (p ProcessType) String() string {
 	}
 
 	return ""
-}
-
-// Parse parse default args struct.
-func (a *ArgsDef) Parse(args Args) error {
-	return ParseArg(args, ad)
 }
 
 // Execute adds all child commands to the root command sets flags appropriately.
@@ -431,8 +421,7 @@ func (g *Gcon) Engine(ti TaskInfo) error {
 
 		// Check async.
 		ad := &ArgsDef{}
-		// err = g.ParseArgs(a.(map[interface{}]interface{}), ad)
-		err = g.Parse(a.(map[interface{}]interface{}), ad)
+		err = g.ParseArgs(a.(map[interface{}]interface{}), ad)
 		if err != nil {
 			return err
 		}
@@ -774,26 +763,6 @@ func (g *Gcon) replace(node string) interface{} {
 	}
 
 	return node
-
-}
-
-// ParseArg is default parse func.
-func ParseArg(a ArgParser, p interface{}) error {
-
-	var err error
-
-	t, err := yaml.Marshal(a)
-	if err != nil {
-		return err
-	}
-
-	err = yaml.Unmarshal(t, p)
-	if err != nil {
-		return err
-	}
-
-	// Validate struct.
-	return validate.Struct(p)
 
 }
 
