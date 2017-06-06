@@ -32,6 +32,9 @@ tasks:
           cmds:
             - cmd: ls
               arg: -la
+              results:
+                - code: 0
+                  id: Ok
       - func: Run
         args:
           targets:
@@ -42,6 +45,9 @@ tasks:
         args:
           cmds:
             - cmd: lsls
+              results:
+                - code: 0
+              other: Ng
       - func: Exec
         args:
           cmds:
@@ -71,6 +77,18 @@ tasks:
       - func: Log
         args:
           msg: log 4
+
+  - id: Ok
+    normal:
+      - func: Log
+        args:
+          msg: Ok error nothing.
+
+  - id: Ng
+    normal:
+      - func: Log
+        args:
+          msg: Ng error occur.
 
 log:
   level: info

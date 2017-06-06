@@ -17,7 +17,12 @@ type Target struct {
 	File string
 }
 
-// Run output msg.
+// Parse parse ArgsRun.
+func (a *ArgsRun) Parse(args Args) {
+	return ParseArg(args, ad)
+}
+
+// Run run task.
 func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 
 	a := &ArgsRun{}

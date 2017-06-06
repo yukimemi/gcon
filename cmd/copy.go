@@ -35,6 +35,11 @@ type Filter struct {
 	Ignores []string
 }
 
+// Parse parse ArgsCopy.
+func (a *ArgsCopy) Parse(args Args) {
+	return ParseArg(args, ad)
+}
+
 // Copy copy file or directory src to dst.
 func (g *Gcon) Copy(args Args) (*TaskInfo, error) {
 
