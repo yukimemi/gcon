@@ -5,10 +5,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -905,6 +907,12 @@ func loopPrint() {
 	green := color.New(color.FgGreen).FprintfFunc()
 	red := color.New(color.FgRed).FprintfFunc()
 	yellow := color.New(color.FgYellow).FprintfFunc()
+
+	if runtime.GOOS == "windows" {
+		green = func(w io.Writer, s string, a ...interface{}) { fmt.Fprintf(w, s, a...) }
+		red = func(w io.Writer, s string, a ...interface{}) { fmt.Fprintf(w, s, a...) }
+		yellow = func(w io.Writer, s string, a ...interface{}) { fmt.Fprintf(w, s, a...) }
+	}
 
 	for {
 

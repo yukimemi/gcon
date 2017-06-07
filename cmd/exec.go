@@ -46,7 +46,10 @@ func (g *Gcon) Exec(args Args) (*TaskInfo, error) {
 
 	// Execute cmd list.
 	for _, cmd := range a.Cmds {
-		c := core.Cmd{CmdLine: cmd.Cmd + " " + cmd.Arg}
+		c, err := core.NewCmd(cmd.Cmd + " " + cmd.Arg)
+		if err != nil {
+			return nil, err
+		}
 		if cmd.Sjis {
 			c.StdoutEnc = japanese.ShiftJIS.NewDecoder()
 		}
@@ -61,7 +64,7 @@ func (g *Gcon) Exec(args Args) (*TaskInfo, error) {
 
 		err = c.CmdStart()
 		if err != nil {
-			return nil, err
+			// return nil, err
 		}
 		// Asynchronous output log.
 		c.Wg.Add(1)
