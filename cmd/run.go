@@ -17,7 +17,7 @@ type Target struct {
 	File string
 }
 
-// Run output msg.
+// Run run task.
 func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 
 	a := &ArgsRun{}
@@ -25,6 +25,11 @@ func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return g.run(*a)
+}
+
+func (g *Gcon) run(a ArgsRun) (*TaskInfo, error) {
 
 	for _, target := range a.Targets {
 		ti := TaskInfo{

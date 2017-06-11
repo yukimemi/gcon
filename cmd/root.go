@@ -5,10 +5,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -883,13 +885,13 @@ func (g *Gcon) Error(args ...interface{}) {
 
 func (g *Gcon) makeMsg(args ...interface{}) []interface{} {
 
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]:", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+	pre := fmt.Sprintf("[%v]\t[%v]\t[%v]\t[%v]\t[%03v]:\t", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name, g.Fi.ID)
 	return append([]interface{}{pre}, args)
 }
 
 func (g *Gcon) makeMsgf(template string) string {
 
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+	pre := fmt.Sprintf("[%v]\t[%v]\t[%v]\t[%v]\t[%03v]:\t", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name, g.Fi.ID)
 	return pre + template
 }
 
@@ -905,6 +907,12 @@ func loopPrint() {
 	green := color.New(color.FgGreen).FprintfFunc()
 	red := color.New(color.FgRed).FprintfFunc()
 	yellow := color.New(color.FgYellow).FprintfFunc()
+
+	if runtime.GOOS == "windows" {
+		green = func(w io.Writer, s string, a ...interface{}) { fmt.Fprintf(w, s, a...) }
+		red = func(w io.Writer, s string, a ...interface{}) { fmt.Fprintf(w, s, a...) }
+		yellow = func(w io.Writer, s string, a ...interface{}) { fmt.Fprintf(w, s, a...) }
+	}
 
 	for {
 

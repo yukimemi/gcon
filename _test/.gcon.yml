@@ -27,12 +27,36 @@ tasks:
                 ignores: [\/g]
               recurse: true
           async: copy
+      - func: Exec
+        args:
+          cmds:
+            - cmd: ls
+              arg: -la
+              results:
+                - code: 0
+                  target:
+                    id: Ok
+              other:
+                id: Ng
       - func: Run
         args:
           targets:
             - id: Hoge
             - id: Fuga
               file: _test/fuga.yml
+      - func: Exec
+        args:
+          cmds:
+            - cmd: lsls
+              results:
+                - code: 0
+              other:
+                id: Ng
+      - func: Exec
+        args:
+          cmds:
+            - cmd: gsr
+              arg: --status --ahead --behind
       - func: Log
         args:
           msg: "log 1 ${@date(2006-01-02 15:04)}"
@@ -57,6 +81,18 @@ tasks:
       - func: Log
         args:
           msg: log 4
+
+  - id: Ok
+    normal:
+      - func: Log
+        args:
+          msg: Ok error nothing.
+
+  - id: Ng
+    normal:
+      - func: Log
+        args:
+          msg: Ng error occur.
 
 log:
   level: info

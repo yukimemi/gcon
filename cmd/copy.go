@@ -44,6 +44,11 @@ func (g *Gcon) Copy(args Args) (*TaskInfo, error) {
 		return nil, err
 	}
 
+	return g.copy(*a)
+}
+
+func (g *Gcon) copy(a ArgsCopy) (*TaskInfo, error) {
+
 	for _, pair := range a.Pairs {
 		infos, err := file.GetInfos(pair.Src, file.Option{
 			Matches: pair.Filter.Matches,
