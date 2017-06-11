@@ -3,9 +3,8 @@ package cmd
 import (
 	"strings"
 
-	"golang.org/x/text/encoding/japanese"
-
 	"github.com/yukimemi/core"
+	"golang.org/x/text/encoding/japanese"
 )
 
 func init() {
@@ -44,6 +43,11 @@ func (g *Gcon) Exec(args Args) (*TaskInfo, error) {
 		return nil, err
 	}
 
+	return g.exec(*a)
+}
+
+func (g *Gcon) exec(a ArgsExec) (*TaskInfo, error) {
+
 	// Execute cmd list.
 	for _, cmd := range a.Cmds {
 		c, err := core.NewCmd(cmd.Cmd + " " + cmd.Arg)
@@ -63,35 +67,32 @@ func (g *Gcon) Exec(args Args) (*TaskInfo, error) {
 		}
 
 		err = c.CmdStart()
-		if err != nil {
-			// return nil, err
+		if err == nil {
+			// Asynchronous output log.
+			c.Wg.Add(1)
+			go func() {
+				defer c.Wg.Done()
+				for soScanner.Scan() {
+					g.Infof(soScanner.Text())
+				}
+			}()
+			c.Wg.Add(1)
+			go func() {
+				defer c.Wg.Done()
+				for seScanner.Scan() {
+					g.Errorf(seScanner.Text())
+				}
+			}()
+			c.CmdWait()
 		}
-		// Asynchronous output log.
-		c.Wg.Add(1)
-		go func() {
-			defer c.Wg.Done()
-			for soScanner.Scan() {
-				g.Infof(soScanner.Text())
-			}
-		}()
-		c.Wg.Add(1)
-		go func() {
-			defer c.Wg.Done()
-			for seScanner.Scan() {
-				g.Errorf(seScanner.Text())
-			}
-		}()
 
-		c.CmdWait()
-
-		g.Infof("Cmd:      [%v]", c.Cmd.Args[0])
-		g.Infof("Arg:      [%v]", strings.Join(c.Cmd.Args[1:], " "))
-		g.Infof("ExitCode: [%v]", c.ExitCode)
-		g.Infof("Stdout:   [%v]", c.Stdout.String())
-		g.Infof("Stderr:   [%v]", c.Stderr.String())
+		g.Infof("Cmd  : [%v]", c.Cmd.Args[0])
+		g.Infof("Arg  : [%v]", strings.Join(c.Cmd.Args[1:], " "))
+		g.Infof("Code : [%v]", c.ExitCode)
 
 		target := new(Target)
 		for _, result := range cmd.Results {
+			g.Infof("id: [%v] code: [%v]", result.ID, result.Code)
 			if c.ExitCode == result.Code && result.ID != "" {
 				*target = result.Target
 				break
@@ -102,11 +103,13 @@ func (g *Gcon) Exec(args Args) (*TaskInfo, error) {
 			*target = cmd.Other
 		}
 
-		// Run result or other target.
-		ar := ArgsRun{Targets: []Target{*target}}
-		ti, err := g.run(ar)
-		if err != nil {
-			return ti, err
+		if target.ID != "" {
+			// Run result or other target.
+			ar := ArgsRun{Targets: []Target{*target}}
+			ti, err := g.run(ar)
+			if err != nil {
+				return ti, err
+			}
 		}
 
 	}

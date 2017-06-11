@@ -20,6 +20,12 @@ func (g *Gcon) Log(args Args) (*TaskInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return g.log(*a)
+}
+
+func (g *Gcon) log(a ArgsLog) (*TaskInfo, error) {
+
 	if a.Stdout {
 		// fmt.Println(a.Msg)
 	}

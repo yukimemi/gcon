@@ -34,7 +34,8 @@ tasks:
               arg: -la
               results:
                 - code: 0
-                  id: Ok
+                  target:
+                    id: Ok
               other:
                 id: Ng
       - func: Run

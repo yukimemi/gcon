@@ -26,6 +26,11 @@ func (g *Gcon) SetStore(args Args) (*TaskInfo, error) {
 		return nil, err
 	}
 
+	return g.setStore(*a)
+}
+
+func (g *Gcon) setStore(a ArgsSet) (*TaskInfo, error) {
+
 	for _, set := range a.Sets {
 		g.Set(set.Key, set.Val, true)
 	}

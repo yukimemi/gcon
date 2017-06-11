@@ -29,9 +29,9 @@ func (g *Gcon) Run(args Args) (*TaskInfo, error) {
 	return g.run(*a)
 }
 
-func (g *Gcon) run(ar ArgsRun) (*TaskInfo, error) {
+func (g *Gcon) run(a ArgsRun) (*TaskInfo, error) {
 
-	for _, target := range ar.Targets {
+	for _, target := range a.Targets {
 		ti := TaskInfo{
 			ID:      target.ID,
 			Path:    target.File,

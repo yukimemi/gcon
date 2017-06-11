@@ -20,6 +20,11 @@ func (g *Gcon) Wait(args Args) (*TaskInfo, error) {
 		return nil, err
 	}
 
+	return g.wait(*a)
+}
+
+func (g *Gcon) wait(a ArgsWait) (*TaskInfo, error) {
+
 	// Get target async func.
 	afs := make([]*FuncInfo, 0)
 	asyncMu.Lock()

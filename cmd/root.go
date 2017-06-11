@@ -885,13 +885,13 @@ func (g *Gcon) Error(args ...interface{}) {
 
 func (g *Gcon) makeMsg(args ...interface{}) []interface{} {
 
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]:", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+	pre := fmt.Sprintf("[%v]\t[%v]\t[%v]\t[%v]\t[%03v]:\t", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name, g.Fi.ID)
 	return append([]interface{}{pre}, args)
 }
 
 func (g *Gcon) makeMsgf(template string) string {
 
-	pre := fmt.Sprintf("[%v] [%v] [%v] [%v]: ", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name)
+	pre := fmt.Sprintf("[%v]\t[%v]\t[%v]\t[%v]\t[%03v]:\t", g.Ti.Path, g.Ti.ID, g.Ti.ProType, g.Fi.Name, g.Fi.ID)
 	return pre + template
 }
 
